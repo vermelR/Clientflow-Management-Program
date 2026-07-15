@@ -1,5 +1,7 @@
 /* ============================================================
    DJ ClientFlow — client, gig & invoice manager for DJs
+   Invoice engine & design integrated from RND Invoice Generator
+   (github.com/vermelR/Invoice-Generator).
    All data lives in localStorage. No server required.
    ============================================================ */
 
@@ -7,22 +9,56 @@
   "use strict";
 
   const STORAGE_KEY = "djclientflow.v1";
+  const GMAIL_TOKEN_KEY = "djclientflow.gmailToken";
 
   /* ---------------- State ---------------- */
 
+  const DEFAULT_HOTEL_TEXT = "Client to provide 1 room with 2 beds for night of events as well as one day before and after at the performance venue. If venue does not have a hotel onsite, accommodations must be made within 3 miles of the venue and approved by RND Entertainment. For any contracts containing larger setups, additional rooms may be required for additional production team members. If parking is not available onsite for oversized vehicles, reimbursements are required.";
+
   const defaultSettings = () => ({
-    businessName: "My DJ Business",
+    businessName: "RND Entertainment",
     ownerName: "",
-    email: "",
-    phone: "",
-    address: "",
+    email: "officialdjrnd@gmail.com",
+    phone: "+1 732-535-2244",
+    address: "1120 Staghorn Dr., North Brunswick, NJ 08902",
+    logoText: "RND",
+    logoImg: "",
     currency: "USD",
     taxRate: 0,
     invoicePrefix: "INV-",
     nextInvoiceNumber: 1,
     paymentInstructions: "Payment accepted via Venmo, Zelle, or check. Thank you for your business!",
     defaultDueDays: 14,
+    hotelText: DEFAULT_HOTEL_TEXT,
+    googleClientId: "",
   });
+
+  // Convert flat legacy invoices ({items, discount}) to the RND
+  // grouped model ({groups, discounts, hotel clause}).
+  function migrateInvoice(inv) {
+    if (inv.groups) {
+      inv.discounts = inv.discounts || [];
+      inv.groups.forEach(g => {
+        g.items = g.items || [];
+        g.items.forEach(it => { it.details = it.details || []; });
+      });
+      return inv;
+    }
+    const items = (inv.items || []).map(it => ({
+      name: it.desc || "", qty: Number(it.qty) || 1,
+      price: Number(it.rate) || 0, comp: false, details: [],
+    }));
+    const migrated = {
+      ...inv,
+      groups: [{ name: "Services", items }],
+      discounts: Number(inv.discount) ? [{ name: "Discount", amount: Number(inv.discount) }] : [],
+      hotelEnabled: false,
+      hotelText: "",
+    };
+    delete migrated.items;
+    delete migrated.discount;
+    return migrated;
+  }
 
   let state = load();
 
@@ -35,7 +71,7 @@
           settings: { ...defaultSettings(), ...(parsed.settings || {}) },
           clients: parsed.clients || [],
           events: parsed.events || [],
-          invoices: parsed.invoices || [],
+          invoices: (parsed.invoices || []).map(migrateInvoice),
         };
       }
     } catch (e) { console.error("Failed to load data", e); }
@@ -111,11 +147,21 @@
 
   /* ---------------- Invoice math & status ---------------- */
 
+  function itemAmount(it) {
+    if (it.comp) return 0;
+    return (Number(it.price) || 0) * (Number(it.qty) || 1);
+  }
+  function groupSum(g) {
+    return (g.items || []).reduce((s, it) => s + itemAmount(it), 0);
+  }
   function invSubtotal(inv) {
-    return (inv.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0);
+    return (inv.groups || []).reduce((s, g) => s + groupSum(g), 0);
   }
   function invTax(inv) { return invSubtotal(inv) * ((Number(inv.taxRate) || 0) / 100); }
-  function invTotal(inv) { return invSubtotal(inv) + invTax(inv) - (Number(inv.discount) || 0); }
+  function invDiscountTotal(inv) {
+    return (inv.discounts || []).reduce((s, d) => s + Math.abs(Number(d.amount) || 0), 0);
+  }
+  function invTotal(inv) { return invSubtotal(inv) + invTax(inv) - invDiscountTotal(inv); }
 
   // "sent" invoices past their due date display as overdue.
   function invStatus(inv) {
@@ -140,7 +186,7 @@
     el.textContent = msg;
     el.classList.remove("hidden");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.add("hidden"), 2600);
+    toastTimer = setTimeout(() => el.classList.add("hidden"), 3000);
   }
 
   /* ---------------- Modal ---------------- */
@@ -463,7 +509,7 @@
         <button class="btn" id="detailNewGig">+ Gig for this client</button>
         <button class="btn" id="detailNewInv">+ Invoice</button>
         <button class="btn btn-primary" id="detailEdit">Edit client</button>
-      </div>`, ), true);
+      </div>`), true);
 
     $("#detailEdit").addEventListener("click", () => openClientForm(id));
     $("#detailNewGig").addEventListener("click", () => openEventForm(null, id));
@@ -475,7 +521,7 @@
 
   let eventFilter = "upcoming";
 
-  const EVENT_TYPES = ["Wedding", "Birthday", "Corporate", "Club Night", "School Dance", "Private Party", "Festival", "Other"];
+  const EVENT_TYPES = ["Wedding", "Sangeet", "Mehndi", "Baraat", "Reception", "Birthday", "Corporate", "Club Night", "School Dance", "Private Party", "Festival", "Other"];
 
   function renderEvents(root) {
     const today = todayISO();
@@ -645,7 +691,7 @@
       <div class="view-header">
         <div>
           <div class="view-title">Invoices</div>
-          <div class="view-sub">Create, send and track payments</div>
+          <div class="view-sub">RND-style invoices — create, send and track payments</div>
         </div>
         <div class="header-actions">
           <button class="btn btn-primary" id="addInvoice">+ New invoice</button>
@@ -688,16 +734,10 @@
     bindRowOpeners(root);
   }
 
-  function lineItemRowHtml(item = { desc: "", qty: 1, rate: "" }) {
-    return `
-      <div class="line-item-row">
-        <input class="li-desc" placeholder="Description (e.g. DJ services — 5 hours)" value="${escapeHtml(item.desc)}">
-        <input class="li-qty" type="number" min="0" step="0.5" value="${escapeHtml(item.qty)}">
-        <input class="li-rate" type="number" min="0" step="0.01" placeholder="0.00" value="${escapeHtml(item.rate)}">
-        <div class="line-item-total">$0.00</div>
-        <button type="button" class="remove-line" title="Remove line">✕</button>
-      </div>`;
-  }
+  /* ---------- Invoice editor (RND grouped model) ---------- */
+
+  const newItem = () => ({ name: "", qty: 1, price: "", comp: false, details: [] });
+  const newGroup = () => ({ name: "", items: [newItem()] });
 
   function openInvoiceForm(id, preset = {}) {
     const inv = id ? invoiceById(id) : null;
@@ -711,17 +751,28 @@
     const number = inv ? inv.number : s.invoicePrefix + String(s.nextInvoiceNumber).padStart(3, "0");
     const issueDate = inv?.issueDate || todayISO();
     const dueDate = inv?.dueDate || addDaysISO(issueDate, s.defaultDueDays || 14);
-
-    // Pre-fill a line item from the linked gig's fee when creating from a gig.
-    let items = inv?.items?.length ? inv.items : null;
-    if (!items && preset.eventId) {
-      const ev = eventById(preset.eventId);
-      if (ev) items = [{ desc: `DJ services — ${ev.title} (${fmtDate(ev.date)})`, qty: 1, rate: ev.fee || "" }];
-    }
-    if (!items) items = [{ desc: "", qty: 1, rate: "" }];
-
     const clientId = inv?.clientId || preset.clientId || "";
     const eventId = inv?.eventId || preset.eventId || "";
+
+    // Working copy the editor mutates; committed on submit.
+    let draft;
+    if (inv) {
+      draft = JSON.parse(JSON.stringify({
+        groups: inv.groups, discounts: inv.discounts,
+        hotelEnabled: !!inv.hotelEnabled, hotelText: inv.hotelText || s.hotelText,
+      }));
+      if (!draft.groups.length) draft.groups = [newGroup()];
+    } else {
+      let groups = [newGroup()];
+      if (preset.eventId) {
+        const ev = eventById(preset.eventId);
+        if (ev) groups = [{
+          name: ev.title,
+          items: [{ name: `DJ services — ${fmtDate(ev.date)}`, qty: 1, price: ev.fee || "", comp: false, details: [] }],
+        }];
+      }
+      draft = { groups, discounts: [], hotelEnabled: true, hotelText: s.hotelText };
+    }
 
     openModal(modalShell(inv ? `Edit invoice ${inv.number}` : "New invoice", `
       <form id="invoiceForm">
@@ -729,9 +780,9 @@
           <div class="field"><label>Invoice #</label><input name="number" value="${escapeHtml(number)}"></div>
           <div class="field"><label>Client *</label><select name="clientId" required>${clientOptions(clientId)}</select></div>
           <div class="field"><label>Linked gig (optional)</label>
-            <select name="eventId" id="invEventSel">
+            <select name="eventId">
               <option value="">— None —</option>
-              ${state.events.sort((a, b) => b.date.localeCompare(a.date)).map(e =>
+              ${[...state.events].sort((a, b) => b.date.localeCompare(a.date)).map(e =>
                 `<option value="${e.id}" ${e.id === eventId ? "selected" : ""}>${escapeHtml(e.title)} (${fmtDate(e.date)})</option>`).join("")}
             </select>
           </div>
@@ -744,24 +795,30 @@
           <div class="field"><label>Due date</label><input name="dueDate" type="date" value="${escapeHtml(dueDate)}"></div>
         </div>
 
-        <div class="section-label">Line items</div>
-        <div class="line-item-head"><div>Description</div><div>Qty</div><div>Rate</div><div style="text-align:right">Total</div><div></div></div>
-        <div class="line-items" id="lineItems">
-          ${items.map(it => lineItemRowHtml(it)).join("")}
+        <div class="section-label">Events / line items
+          <span class="section-hint">Group items under each event (Sangeet, Reception…). Included items show on the invoice without a price. COMP = included free.</span>
         </div>
-        <button type="button" class="btn btn-sm" id="addLine">+ Add line</button>
+        <div id="invGroups"></div>
+        <button type="button" class="btn btn-sm" id="addGroup">+ Add event / section</button>
+
+        <div class="section-label">Discounts</div>
+        <div id="invDiscounts"></div>
+        <button type="button" class="btn btn-sm" id="addDiscount">+ Add discount</button>
+
+        <div class="section-label">Hotel &amp; parking clause</div>
+        <label class="comp-toggle" style="margin-bottom:8px">
+          <input type="checkbox" id="hotelEnabled" ${draft.hotelEnabled ? "checked" : ""}> Include hotel &amp; parking clause on invoice
+        </label>
+        <textarea id="hotelText" class="field-textarea" rows="3">${escapeHtml(draft.hotelText)}</textarea>
 
         <div class="invoice-totals">
           <div class="totals-row"><span class="lbl">Subtotal</span><span id="tSubtotal">$0.00</span></div>
           <div class="totals-row">
-            <span class="lbl">Tax % <input id="taxRateInput" type="number" min="0" step="0.01" style="width:70px;padding:4px 6px;border:1px solid var(--border);border-radius:6px" value="${escapeHtml(inv?.taxRate ?? s.taxRate ?? 0)}"></span>
+            <span class="lbl">Tax % <input id="taxRateInput" type="number" min="0" step="0.01" class="mini-num" value="${escapeHtml(inv?.taxRate ?? s.taxRate ?? 0)}"></span>
             <span id="tTax">$0.00</span>
           </div>
-          <div class="totals-row">
-            <span class="lbl">Discount $ <input id="discountInput" type="number" min="0" step="0.01" style="width:90px;padding:4px 6px;border:1px solid var(--border);border-radius:6px" value="${escapeHtml(inv?.discount || 0)}"></span>
-            <span id="tDiscount">$0.00</span>
-          </div>
-          <div class="totals-row grand"><span class="lbl">Total</span><span id="tTotal">$0.00</span></div>
+          <div class="totals-row"><span class="lbl">Discounts</span><span id="tDiscount">−$0.00</span></div>
+          <div class="totals-row grand"><span class="lbl">Amount due</span><span id="tTotal">$0.00</span></div>
         </div>
 
         <div class="field" style="margin-top:14px"><label>Notes to client</label>
@@ -776,45 +833,110 @@
       </form>`), true);
 
     const form = $("#invoiceForm");
-    const lineItemsEl = $("#lineItems");
+    const groupsEl = $("#invGroups");
+    const discountsEl = $("#invDiscounts");
 
-    function readItems() {
-      return $$(".line-item-row", lineItemsEl).map(row => ({
-        desc: $(".li-desc", row).value,
-        qty: Number($(".li-qty", row).value) || 0,
-        rate: Number($(".li-rate", row).value) || 0,
-      }));
+    function renderEditor() {
+      groupsEl.innerHTML = draft.groups.map((g, gi) => `
+        <div class="group-card">
+          <div class="group-head">
+            <input class="ed" data-g="${gi}" data-f="name" value="${escapeHtml(g.name)}" placeholder="Event / section name (e.g. Reception — 400 People)">
+            <button type="button" class="remove-line" data-act="rm-group" data-g="${gi}" title="Remove section">✕</button>
+          </div>
+          ${g.items.map((it, ii) => `
+            <div class="item-block">
+              <div class="item-row">
+                <input class="ed" data-g="${gi}" data-i="${ii}" data-f="name" value="${escapeHtml(it.name)}" placeholder="Package / item (e.g. Sound Package)">
+                <input class="ed" type="number" min="0" step="0.5" data-g="${gi}" data-i="${ii}" data-f="qty" value="${escapeHtml(it.qty)}" title="Qty">
+                <input class="ed" type="number" min="0" step="0.01" data-g="${gi}" data-i="${ii}" data-f="price" value="${escapeHtml(it.comp ? "" : it.price)}" placeholder="Price" ${it.comp ? "disabled" : ""}>
+                <label class="comp-toggle" title="Complimentary — shows COMP on invoice">
+                  <input type="checkbox" class="ed" data-g="${gi}" data-i="${ii}" data-f="comp" ${it.comp ? "checked" : ""}> COMP
+                </label>
+                <button type="button" class="remove-line" data-act="rm-item" data-g="${gi}" data-i="${ii}" title="Remove item">✕</button>
+              </div>
+              <div class="detail-rows">
+                ${it.details.map((dt, di) => `
+                  <div class="detail-row">
+                    <input class="ed" data-g="${gi}" data-i="${ii}" data-d="${di}" data-f="name" value="${escapeHtml(dt.name)}" placeholder="Included item (e.g. RCF 945, Wireless Microphone)">
+                    <input class="ed" type="number" min="0" data-g="${gi}" data-i="${ii}" data-d="${di}" data-f="qty" value="${escapeHtml(dt.qty)}" title="Qty">
+                    <button type="button" class="remove-line" data-act="rm-detail" data-g="${gi}" data-i="${ii}" data-d="${di}" title="Remove">✕</button>
+                  </div>`).join("")}
+                <button type="button" class="btn btn-sm btn-ghost" data-act="add-detail" data-g="${gi}" data-i="${ii}">+ Included item</button>
+              </div>
+            </div>`).join("")}
+          <button type="button" class="btn btn-sm btn-ghost" data-act="add-item" data-g="${gi}">+ Add item</button>
+        </div>`).join("");
+
+      discountsEl.innerHTML = draft.discounts.length ? draft.discounts.map((d, di) => `
+        <div class="detail-row discount-row">
+          <input class="edd" data-di="${di}" data-f="name" value="${escapeHtml(d.name)}" placeholder="Discount label (e.g. Friends + Family)">
+          <input class="edd" type="number" min="0" step="0.01" data-di="${di}" data-f="amount" value="${escapeHtml(d.amount)}" placeholder="Amount">
+          <button type="button" class="remove-line" data-act="rm-discount" data-di="${di}" title="Remove">✕</button>
+        </div>`).join("") : "";
+      recalc();
+    }
+
+    function draftTotals() {
+      return {
+        groups: draft.groups, discounts: draft.discounts,
+        taxRate: Number($("#taxRateInput").value) || 0,
+      };
     }
 
     function recalc() {
-      const draft = {
-        items: readItems(),
-        taxRate: Number($("#taxRateInput").value) || 0,
-        discount: Number($("#discountInput").value) || 0,
-      };
-      $$(".line-item-row", lineItemsEl).forEach(row => {
-        const qty = Number($(".li-qty", row).value) || 0;
-        const rate = Number($(".li-rate", row).value) || 0;
-        $(".line-item-total", row).textContent = money(qty * rate);
-      });
-      $("#tSubtotal").textContent = money(invSubtotal(draft));
-      $("#tTax").textContent = money(invTax(draft));
-      $("#tDiscount").textContent = "−" + money(draft.discount);
-      $("#tTotal").textContent = money(invTotal(draft));
+      const d = draftTotals();
+      $("#tSubtotal").textContent = money(invSubtotal(d));
+      $("#tTax").textContent = money(invTax(d));
+      $("#tDiscount").textContent = "−" + money(invDiscountTotal(d));
+      $("#tTotal").textContent = money(invTotal(d));
     }
 
-    form.addEventListener("input", recalc);
-    lineItemsEl.addEventListener("click", e => {
-      const btn = e.target.closest(".remove-line");
+    form.addEventListener("input", e => {
+      const el = e.target;
+      if (el.classList.contains("ed")) {
+        const g = Number(el.dataset.g), f = el.dataset.f;
+        const grp = draft.groups[g];
+        if (!grp) return;
+        if (el.dataset.d !== undefined) {
+          const det = grp.items[Number(el.dataset.i)]?.details[Number(el.dataset.d)];
+          if (det) det[f] = el.value;
+        } else if (el.dataset.i !== undefined) {
+          const it = grp.items[Number(el.dataset.i)];
+          if (!it) return;
+          if (f === "comp") { it.comp = el.checked; renderEditor(); return; }
+          it[f] = el.value;
+        } else {
+          grp[f] = el.value;
+        }
+      } else if (el.classList.contains("edd")) {
+        const d = draft.discounts[Number(el.dataset.di)];
+        if (d) d[el.dataset.f] = el.value;
+      } else if (el.id === "hotelEnabled") {
+        draft.hotelEnabled = el.checked;
+      } else if (el.id === "hotelText") {
+        draft.hotelText = el.value;
+      }
+      recalc();
+    });
+
+    form.addEventListener("click", e => {
+      const btn = e.target.closest("[data-act]");
       if (!btn) return;
-      if ($$(".line-item-row", lineItemsEl).length > 1) btn.closest(".line-item-row").remove();
-      recalc();
+      const g = Number(btn.dataset.g), i = Number(btn.dataset.i), d = Number(btn.dataset.d), di = Number(btn.dataset.di);
+      const act = btn.dataset.act;
+      if (act === "rm-group") { if (draft.groups.length > 1) draft.groups.splice(g, 1); else draft.groups = [newGroup()]; }
+      else if (act === "add-item") draft.groups[g].items.push(newItem());
+      else if (act === "rm-item") { const items = draft.groups[g].items; if (items.length > 1) items.splice(i, 1); else draft.groups[g].items = [newItem()]; }
+      else if (act === "add-detail") draft.groups[g].items[i].details.push({ name: "", qty: 1 });
+      else if (act === "rm-detail") draft.groups[g].items[i].details.splice(d, 1);
+      else if (act === "rm-discount") draft.discounts.splice(di, 1);
+      else return;
+      renderEditor();
     });
-    $("#addLine").addEventListener("click", () => {
-      lineItemsEl.insertAdjacentHTML("beforeend", lineItemRowHtml());
-      recalc();
-    });
-    recalc();
+
+    $("#addGroup").addEventListener("click", () => { draft.groups.push(newGroup()); renderEditor(); });
+    $("#addDiscount").addEventListener("click", () => { draft.discounts.push({ name: "", amount: "" }); renderEditor(); });
+    renderEditor();
 
     $("#cancelModal").addEventListener("click", closeModal);
     $("#deleteInvoice")?.addEventListener("click", () => {
@@ -826,8 +948,25 @@
     form.addEventListener("submit", e => {
       e.preventDefault();
       const fd = Object.fromEntries(new FormData(form).entries());
-      const items = readItems().filter(it => it.desc || it.rate);
-      if (!items.length) { toast("Add at least one line item"); return; }
+
+      // Drop empty rows; normalize numbers.
+      const groups = draft.groups.map(g => ({
+        name: g.name.trim(),
+        items: g.items
+          .filter(it => it.name.trim() || it.price !== "" || it.details.some(dt => dt.name.trim()))
+          .map(it => ({
+            name: it.name.trim(), qty: Number(it.qty) || 1,
+            price: it.comp ? 0 : (Number(it.price) || 0), comp: !!it.comp,
+            details: it.details.filter(dt => dt.name.trim()).map(dt => ({ name: dt.name.trim(), qty: Number(dt.qty) || 1 })),
+          })),
+      })).filter(g => g.name || g.items.length);
+
+      if (!groups.some(g => g.items.length)) { toast("Add at least one line item"); return; }
+
+      const discounts = draft.discounts
+        .filter(d => d.name.trim() || d.amount !== "")
+        .map(d => ({ name: d.name.trim() || "Discount", amount: Math.abs(Number(d.amount) || 0) }));
+
       const data = {
         number: fd.number || number,
         clientId: fd.clientId,
@@ -835,9 +974,10 @@
         status: fd.status,
         issueDate: fd.issueDate,
         dueDate: fd.dueDate,
-        items,
+        groups, discounts,
+        hotelEnabled: draft.hotelEnabled,
+        hotelText: draft.hotelText,
         taxRate: Number($("#taxRateInput").value) || 0,
-        discount: Number($("#discountInput").value) || 0,
         notes: fd.notes,
       };
       if (inv) {
@@ -854,50 +994,134 @@
     });
   }
 
+  /* ---------- Invoice document (RND Entertainment design) ---------- */
+
+  function logoHtml() {
+    const s = state.settings;
+    if (s.logoImg) return `<img src="${s.logoImg}" alt="logo">`;
+    return escapeHtml(s.logoText || s.businessName || "");
+  }
+
+  function invoiceDocHtml(inv) {
+    const s = state.settings;
+    const c = clientById(inv.clientId);
+    const ev = inv.eventId ? eventById(inv.eventId) : null;
+    const status = invStatus(inv);
+    const title = inv.status === "draft" ? "Draft Invoice" : "Invoice";
+
+    let rows = "";
+    (inv.groups || []).forEach(g => {
+      const hasItems = g.items.length > 0;
+      if (!g.name && !hasItems) return;
+      const anyNonComp = g.items.some(it => !it.comp);
+      const evTotal = !hasItems ? "" : (!anyNonComp ? "COMP" : money(groupSum(g)));
+      rows += `<tr class="row-event"><td colspan="3">${escapeHtml(g.name || "Services")}</td><td>${evTotal}</td></tr>`;
+      g.items.forEach(it => {
+        if (!it.name) return;
+        const price = it.comp ? "COMP" : money(Number(it.price) || 0);
+        const total = it.comp ? "COMP" : money(itemAmount(it));
+        rows += `<tr class="row-pkg"><td>${escapeHtml(it.name)}</td><td>${it.qty || 1}</td><td>${price}</td><td>${total}</td></tr>`;
+        (it.details || []).forEach(dt => {
+          if (!dt.name) return;
+          rows += `<tr class="row-equip"><td>${escapeHtml(dt.name)}</td><td>${dt.qty || 1}</td><td></td><td></td></tr>`;
+        });
+      });
+    });
+
+    if ((inv.discounts || []).length) {
+      const discTotal = -invDiscountTotal(inv);
+      rows += `<tr class="row-discount-group"><td colspan="3">Discounts</td><td>−${money(-discTotal)}</td></tr>`;
+      inv.discounts.forEach(d => {
+        rows += `<tr class="row-discount"><td colspan="3">${escapeHtml(d.name)}</td><td>−${money(Math.abs(Number(d.amount) || 0))}</td></tr>`;
+      });
+    }
+
+    if (Number(inv.taxRate) > 0) {
+      rows += `<tr class="row-event"><td colspan="3">Tax (${inv.taxRate}%)</td><td>${money(invTax(inv))}</td></tr>`;
+    }
+
+    if (inv.hotelEnabled && inv.hotelText) {
+      rows += `<tr class="row-hotel"><td class="hotel-label">Hotel &amp; Parking<br>Accommodations</td><td colspan="3">${escapeHtml(inv.hotelText)}</td></tr>`;
+    }
+
+    const billLines = [
+      c?.name, c?.company, c?.email, c?.phone,
+      ev ? `${ev.title} — ${fmtDate(ev.date)}` : null,
+      ev?.venue,
+    ].filter(Boolean).map(l => `<div>${escapeHtml(l)}</div>`).join("") || "<div>N/A</div>";
+
+    return `
+      <div class="rnd-doc">
+        <div class="rnd-header">
+          <div class="rnd-header-left">
+            <div class="rnd-company">${escapeHtml(s.businessName || "Your Company")}</div>
+            <div class="rnd-title">${title}</div>
+          </div>
+          <div class="rnd-logo">${logoHtml()}</div>
+        </div>
+        <div class="rnd-meta">
+          <div class="rnd-meta-item">Invoice ${escapeHtml(inv.number || "—")}</div>
+          <div class="rnd-meta-item">Issued On: ${fmtDate(inv.issueDate)}</div>
+          <div class="rnd-meta-item">Due Date: ${fmtDate(inv.dueDate)}</div>
+          ${status === "paid" ? `<div class="rnd-meta-item rnd-paid">PAID ${inv.paidDate ? fmtDate(inv.paidDate) : ""}</div>` : ""}
+        </div>
+        <div class="rnd-parties">
+          <div>
+            <div class="rnd-party-label">Bill to:</div>
+            <div class="rnd-party-val">${billLines}</div>
+          </div>
+          <div>
+            <div class="rnd-party-label">Payable to:</div>
+            <div class="rnd-party-val">${escapeHtml(s.businessName || "")}<br>${escapeHtml(s.address || "").replace(/\n/g, "<br>")}</div>
+          </div>
+        </div>
+        <table class="rnd-table">
+          <thead><tr>
+            <th style="width:55%">Description</th>
+            <th style="width:12%">Quantity</th>
+            <th style="width:16%">Price</th>
+            <th style="width:17%">Total</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        ${inv.notes ? `<div class="rnd-notes">${escapeHtml(inv.notes).replace(/\n/g, "<br>")}</div>` : ""}
+        <div class="rnd-total">
+          <span class="rnd-total-label">Amount Due:</span>
+          <span class="rnd-total-val">${money(invTotal(inv))}</span>
+        </div>
+        <div class="rnd-footer">
+          <div class="rnd-footer-logo">${logoHtml()}</div>
+          <div class="rnd-footer-info">
+            <span>${escapeHtml(s.address || "")}</span>
+            <span>${escapeHtml(s.phone || "")}</span>
+            <span>${escapeHtml(s.email || "")}</span>
+          </div>
+        </div>
+      </div>`;
+  }
+
   function openInvoiceDetail(id) {
     const inv = invoiceById(id);
     if (!inv) return;
     const c = clientById(inv.clientId);
-    const ev = inv.eventId ? eventById(inv.eventId) : null;
     const status = invStatus(inv);
+    const gmailOn = !!state.settings.googleClientId;
 
     openModal(modalShell(`Invoice ${inv.number}`, `
-      <div style="margin-bottom:14px">${badge(status)}</div>
-      <div class="detail-grid">
-        <div class="detail-item"><div class="lbl">Billed to</div><div class="val">${c ? escapeHtml(c.name) : "—"}${c?.email ? `<br><span style="font-size:12.5px;color:var(--muted)">${escapeHtml(c.email)}</span>` : ""}</div></div>
-        <div class="detail-item"><div class="lbl">Issued</div><div class="val">${fmtDate(inv.issueDate)}</div></div>
-        <div class="detail-item"><div class="lbl">Due</div><div class="val">${fmtDate(inv.dueDate)}</div></div>
-        ${ev ? `<div class="detail-item"><div class="lbl">Gig</div><div class="val">${escapeHtml(ev.title)}</div></div>` : ""}
-        ${inv.paidDate ? `<div class="detail-item"><div class="lbl">Paid on</div><div class="val">${fmtDate(inv.paidDate)}</div></div>` : ""}
+      <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        ${badge(status)}
+        <span style="color:var(--muted);font-size:13px">${c ? "Billed to " + escapeHtml(c.name) : ""}${inv.paidDate ? " · paid " + fmtDate(inv.paidDate) : ""}</span>
       </div>
-
-      <div class="table-wrap"><table>
-        <thead><tr><th>Description</th><th class="right">Qty</th><th class="right">Rate</th><th class="right">Amount</th></tr></thead>
-        <tbody>
-          ${inv.items.map(it => `<tr>
-            <td>${escapeHtml(it.desc)}</td>
-            <td class="right">${it.qty}</td>
-            <td class="right nowrap">${money(it.rate)}</td>
-            <td class="right nowrap">${money(it.qty * it.rate)}</td>
-          </tr>`).join("")}
-        </tbody></table></div>
-
-      <div class="invoice-totals">
-        <div class="totals-row"><span class="lbl">Subtotal</span><span>${money(invSubtotal(inv))}</span></div>
-        ${inv.taxRate ? `<div class="totals-row"><span class="lbl">Tax (${inv.taxRate}%)</span><span>${money(invTax(inv))}</span></div>` : ""}
-        ${inv.discount ? `<div class="totals-row"><span class="lbl">Discount</span><span>−${money(inv.discount)}</span></div>` : ""}
-        <div class="totals-row grand"><span class="lbl">Total</span><span>${money(invTotal(inv))}</span></div>
-      </div>
-
-      ${inv.notes ? `<div class="section-label">Notes</div><div class="notes-box">${escapeHtml(inv.notes)}</div>` : ""}
-
-      <div class="modal-actions">
+      <div class="doc-preview">${invoiceDocHtml(inv)}</div>
+      <div class="modal-actions" style="flex-wrap:wrap">
         ${status !== "paid" ? `<button class="btn" id="invMarkPaid">✓ Mark paid</button>` : ""}
         ${status === "draft" ? `<button class="btn" id="invMarkSent">Mark sent</button>` : ""}
         <button class="btn" id="invPrint">🖨 Print / PDF</button>
-        ${c?.email ? `<button class="btn btn-primary" id="invEmail">✉️ Email to client</button>` : ""}
+        ${c?.email ? `<button class="btn" id="invEmail">✉️ Email (mail app)</button>` : ""}
+        ${c?.email ? `<button class="btn btn-primary" id="invGmail">📨 Send via Gmail</button>` : ""}
         <button class="btn" id="invEdit">Edit</button>
-      </div>`), true);
+      </div>
+      ${!gmailOn && c?.email ? `<div class="gmail-hint">Tip: connect Gmail in <a href="#" id="goSettings">Settings</a> to send invoices directly from here.</div>` : ""}`), true);
 
     $("#invEdit").addEventListener("click", () => openInvoiceForm(id));
     $("#invMarkPaid")?.addEventListener("click", () => {
@@ -911,79 +1135,26 @@
     });
     $("#invPrint").addEventListener("click", () => printInvoice(inv));
     $("#invEmail")?.addEventListener("click", () => emailInvoice(inv));
+    $("#invGmail")?.addEventListener("click", () => sendInvoiceViaGmail(inv, id));
+    $("#goSettings")?.addEventListener("click", e => { e.preventDefault(); closeModal(); go("settings"); });
   }
 
   function printInvoice(inv) {
-    const s = state.settings;
-    const c = clientById(inv.clientId);
-    const ev = inv.eventId ? eventById(inv.eventId) : null;
-
-    $("#printArea").innerHTML = `
-      <div class="inv-doc">
-        <div class="inv-top">
-          <div>
-            <div class="inv-biz-name">${escapeHtml(s.businessName)}</div>
-            <div style="font-size:13px;color:#555;line-height:1.6;margin-top:4px">
-              ${s.ownerName ? escapeHtml(s.ownerName) + "<br>" : ""}
-              ${s.email ? escapeHtml(s.email) + "<br>" : ""}
-              ${s.phone ? escapeHtml(s.phone) + "<br>" : ""}
-              ${s.address ? escapeHtml(s.address) : ""}
-            </div>
-          </div>
-          <div>
-            <h1>INVOICE</h1>
-            <div class="inv-meta">
-              <strong>${escapeHtml(inv.number)}</strong><br>
-              Issued: ${fmtDate(inv.issueDate)}<br>
-              Due: ${fmtDate(inv.dueDate)}
-            </div>
-          </div>
-        </div>
-        <div class="inv-parties">
-          <div class="inv-party">
-            <div class="lbl">Bill to</div>
-            <strong>${c ? escapeHtml(c.name) : ""}</strong><br>
-            ${c?.company ? escapeHtml(c.company) + "<br>" : ""}
-            ${c?.email ? escapeHtml(c.email) + "<br>" : ""}
-            ${c?.phone ? escapeHtml(c.phone) : ""}
-          </div>
-          ${ev ? `<div class="inv-party">
-            <div class="lbl">Event</div>
-            <strong>${escapeHtml(ev.title)}</strong><br>
-            ${fmtDate(ev.date)}${ev.startTime ? " · " + fmtTime(ev.startTime) : ""}<br>
-            ${ev.venue ? escapeHtml(ev.venue) : ""}
-          </div>` : ""}
-        </div>
-        <table>
-          <thead><tr><th style="text-align:left">Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
-          <tbody>
-            ${inv.items.map(it => `<tr>
-              <td>${escapeHtml(it.desc)}</td>
-              <td style="text-align:right">${it.qty}</td>
-              <td style="text-align:right">${money(it.rate)}</td>
-              <td style="text-align:right">${money(it.qty * it.rate)}</td>
-            </tr>`).join("")}
-          </tbody>
-        </table>
-        <div class="inv-totals">
-          <div class="row"><span>Subtotal</span><span>${money(invSubtotal(inv))}</span></div>
-          ${inv.taxRate ? `<div class="row"><span>Tax (${inv.taxRate}%)</span><span>${money(invTax(inv))}</span></div>` : ""}
-          ${inv.discount ? `<div class="row"><span>Discount</span><span>−${money(inv.discount)}</span></div>` : ""}
-          <div class="row grand"><span>Total due</span><span>${money(invTotal(inv))}</span></div>
-        </div>
-        ${inv.notes ? `<div class="inv-notes"><div class="lbl">Notes</div>${escapeHtml(inv.notes)}</div>` : ""}
-        <div class="inv-notes" style="margin-top:40px;text-align:center">Thank you for your business! 🎶</div>
-      </div>`;
+    $("#printArea").innerHTML = invoiceDocHtml(inv);
     window.print();
   }
 
-  function emailInvoice(inv) {
+  /* ---------- Email: mailto fallback ---------- */
+
+  function invoiceEmailSubject(inv) {
+    return `Invoice ${inv.number} from ${state.settings.businessName} — ${money(invTotal(inv))}`;
+  }
+
+  function invoiceEmailText(inv) {
     const s = state.settings;
     const c = clientById(inv.clientId);
-    if (!c?.email) { toast("This client has no email address on file"); return; }
-    const subject = `Invoice ${inv.number} from ${s.businessName} — ${money(invTotal(inv))}`;
     const lines = [
-      `Hi ${c.name.split(" ")[0]},`,
+      `Hi ${c ? c.name.split(" ")[0] : "there"},`,
       ``,
       `Here is your invoice from ${s.businessName}:`,
       ``,
@@ -991,22 +1162,192 @@
       `Issued: ${fmtDate(inv.issueDate)}`,
       `Due: ${fmtDate(inv.dueDate)}`,
       ``,
-      ...inv.items.map(it => `• ${it.desc} — ${it.qty} × ${money(it.rate)} = ${money(it.qty * it.rate)}`),
-      ``,
-      `Total due: ${money(invTotal(inv))}`,
-      ``,
-      inv.notes || "",
-      ``,
-      `Thank you!`,
-      s.ownerName || s.businessName,
-      s.phone || "",
     ];
-    const url = `mailto:${encodeURIComponent(c.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(lines.join("\n"))}`;
+    (inv.groups || []).forEach(g => {
+      if (g.name || g.items.length) lines.push(`${g.name || "Services"}:`);
+      g.items.forEach(it => {
+        lines.push(`  • ${it.name} — ${it.qty} × ${it.comp ? "COMP" : money(it.price)}${it.comp ? "" : " = " + money(itemAmount(it))}`);
+        (it.details || []).forEach(dt => lines.push(`      - ${dt.name} × ${dt.qty}`));
+      });
+    });
+    (inv.discounts || []).forEach(d => lines.push(`  Discount — ${d.name}: −${money(d.amount)}`));
+    if (Number(inv.taxRate) > 0) lines.push(`  Tax (${inv.taxRate}%): ${money(invTax(inv))}`);
+    lines.push(``, `Amount due: ${money(invTotal(inv))}`, ``);
+    if (inv.notes) lines.push(inv.notes, ``);
+    lines.push(`Thank you!`, s.ownerName || s.businessName, s.phone || "");
+    return lines.join("\n");
+  }
+
+  function emailInvoice(inv) {
+    const c = clientById(inv.clientId);
+    if (!c?.email) { toast("This client has no email address on file"); return; }
+    const url = `mailto:${encodeURIComponent(c.email)}?subject=${encodeURIComponent(invoiceEmailSubject(inv))}&body=${encodeURIComponent(invoiceEmailText(inv))}`;
     window.location.href = url;
     if (inv.status === "draft") {
       inv.status = "sent";
       save(); render();
       toast("Email drafted — invoice marked as sent");
+    }
+  }
+
+  /* ---------- Gmail integration (Google Identity Services) ---------- */
+
+  let gmailToken = null;
+  try { gmailToken = JSON.parse(sessionStorage.getItem(GMAIL_TOKEN_KEY)); } catch { /* ignore */ }
+
+  function gmailReady() {
+    return gmailToken && Date.now() < gmailToken.expiresAt - 60000;
+  }
+
+  let gsiPromise = null;
+  function loadGsi() {
+    if (window.google?.accounts?.oauth2) return Promise.resolve();
+    if (gsiPromise) return gsiPromise;
+    gsiPromise = new Promise((resolve, reject) => {
+      const sc = document.createElement("script");
+      sc.src = "https://accounts.google.com/gsi/client";
+      sc.async = true;
+      sc.onload = resolve;
+      sc.onerror = () => { gsiPromise = null; reject(new Error("Could not load Google sign-in — check your internet connection")); };
+      document.head.appendChild(sc);
+    });
+    return gsiPromise;
+  }
+
+  async function connectGmail() {
+    const clientId = (state.settings.googleClientId || "").trim();
+    if (!clientId) {
+      throw new Error("Add your Google OAuth Client ID in Settings → Gmail first");
+    }
+    if (location.protocol === "file:") {
+      throw new Error("Gmail sign-in needs the site served over http(s) — use your GitHub Pages URL");
+    }
+    await loadGsi();
+    return new Promise((resolve, reject) => {
+      const tc = google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: "https://www.googleapis.com/auth/gmail.send",
+        callback: resp => {
+          if (resp.error) { reject(new Error("Google sign-in failed: " + resp.error)); return; }
+          gmailToken = {
+            token: resp.access_token,
+            expiresAt: Date.now() + (Number(resp.expires_in) || 3600) * 1000,
+          };
+          try { sessionStorage.setItem(GMAIL_TOKEN_KEY, JSON.stringify(gmailToken)); } catch { /* ignore */ }
+          resolve();
+        },
+        error_callback: err => reject(new Error("Google sign-in was closed or blocked" + (err?.type ? ` (${err.type})` : ""))),
+      });
+      tc.requestAccessToken();
+    });
+  }
+
+  function disconnectGmail() {
+    gmailToken = null;
+    sessionStorage.removeItem(GMAIL_TOKEN_KEY);
+  }
+
+  const b64utf8 = str => btoa(unescape(encodeURIComponent(str)));
+
+  function invoiceEmailHtml(inv) {
+    const s = state.settings;
+    const c = clientById(inv.clientId);
+    const rowStyle = 'padding:8px 12px;border-bottom:1px solid #eee;font-size:14px;';
+    let rows = "";
+    (inv.groups || []).forEach(g => {
+      rows += `<tr><td colspan="3" style="${rowStyle}font-weight:bold;color:#e85d26;border-bottom:2px solid #3b7dd8;">${escapeHtml(g.name || "Services")}</td><td style="${rowStyle}text-align:right;font-weight:bold;color:#e85d26;border-bottom:2px solid #3b7dd8;">${g.items.some(it => !it.comp) ? money(groupSum(g)) : "COMP"}</td></tr>`;
+      g.items.forEach(it => {
+        if (!it.name) return;
+        rows += `<tr><td style="${rowStyle}padding-left:24px;color:#3b7dd8;">${escapeHtml(it.name)}</td><td style="${rowStyle}text-align:right;">${it.qty || 1}</td><td style="${rowStyle}text-align:right;">${it.comp ? "COMP" : money(it.price)}</td><td style="${rowStyle}text-align:right;">${it.comp ? "COMP" : money(itemAmount(it))}</td></tr>`;
+        (it.details || []).forEach(dt => {
+          if (!dt.name) return;
+          rows += `<tr><td style="${rowStyle}padding-left:44px;color:#666;font-size:13px;">${escapeHtml(dt.name)}</td><td style="${rowStyle}text-align:right;color:#666;font-size:13px;">${dt.qty || 1}</td><td style="${rowStyle}"></td><td style="${rowStyle}"></td></tr>`;
+        });
+      });
+    });
+    (inv.discounts || []).forEach(d => {
+      rows += `<tr><td colspan="3" style="${rowStyle}color:#c0392b;">Discount — ${escapeHtml(d.name)}</td><td style="${rowStyle}text-align:right;color:#c0392b;">−${money(d.amount)}</td></tr>`;
+    });
+    if (Number(inv.taxRate) > 0) {
+      rows += `<tr><td colspan="3" style="${rowStyle}">Tax (${inv.taxRate}%)</td><td style="${rowStyle}text-align:right;">${money(invTax(inv))}</td></tr>`;
+    }
+
+    return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#222;">
+      <div style="max-width:640px;margin:0 auto;background:#fff;">
+        <div style="background:#111;color:#fff;padding:28px 32px;">
+          <div style="font-size:12px;color:#ccc;letter-spacing:1px;">${escapeHtml(s.businessName)}</div>
+          <div style="font-size:30px;font-weight:300;">Invoice ${escapeHtml(inv.number)}</div>
+        </div>
+        <div style="padding:16px 32px;border-bottom:2px solid #ddd;font-size:13px;color:#555;">
+          Issued: ${fmtDate(inv.issueDate)} &nbsp;·&nbsp; Due: <strong style="color:#222;">${fmtDate(inv.dueDate)}</strong>
+        </div>
+        <div style="padding:18px 32px 6px;font-size:14px;">Hi ${escapeHtml(c ? c.name.split(" ")[0] : "there")},<br><br>Here is your invoice from ${escapeHtml(s.businessName)}:</div>
+        <table style="width:100%;border-collapse:collapse;margin-top:12px;">
+          <thead><tr style="background:#111;color:#fff;">
+            <th style="padding:9px 12px;text-align:left;font-size:12px;">Description</th>
+            <th style="padding:9px 12px;text-align:right;font-size:12px;">Qty</th>
+            <th style="padding:9px 12px;text-align:right;font-size:12px;">Price</th>
+            <th style="padding:9px 12px;text-align:right;font-size:12px;">Total</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div style="background:#111;color:#fff;padding:14px 32px;text-align:right;font-size:16px;">
+          Amount Due: <strong style="font-size:20px;">${money(invTotal(inv))}</strong>
+        </div>
+        ${inv.hotelEnabled && inv.hotelText ? `<div style="padding:16px 32px 0;font-size:12px;color:#666;line-height:1.6;"><strong style="color:#e85d26;">Hotel &amp; Parking Accommodations:</strong><br>${escapeHtml(inv.hotelText)}</div>` : ""}
+        ${inv.notes ? `<div style="padding:16px 32px 0;font-size:13px;color:#555;line-height:1.6;">${escapeHtml(inv.notes).replace(/\n/g, "<br>")}</div>` : ""}
+        <div style="padding:22px 32px 28px;font-size:13px;color:#555;line-height:1.7;">
+          Thank you!<br><strong>${escapeHtml(s.ownerName || s.businessName)}</strong><br>
+          ${escapeHtml(s.phone || "")}<br>${escapeHtml(s.email || "")}
+        </div>
+      </div>
+    </body></html>`;
+  }
+
+  async function gmailSend(to, subject, html) {
+    const mime = [
+      `To: ${to}`,
+      `Subject: =?UTF-8?B?${b64utf8(subject)}?=`,
+      "MIME-Version: 1.0",
+      'Content-Type: text/html; charset="UTF-8"',
+      "Content-Transfer-Encoding: base64",
+      "",
+      b64utf8(html),
+    ].join("\r\n");
+    const raw = b64utf8(mime).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${gmailToken.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ raw }),
+    });
+    if (res.status === 401 || res.status === 403) {
+      disconnectGmail();
+      throw new Error("Gmail session expired — click Send again to reconnect");
+    }
+    if (!res.ok) {
+      let msg = `Gmail error (${res.status})`;
+      try { msg = (await res.json()).error?.message || msg; } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+  }
+
+  async function sendInvoiceViaGmail(inv, id) {
+    const c = clientById(inv.clientId);
+    if (!c?.email) { toast("This client has no email address on file"); return; }
+    try {
+      if (!gmailReady()) {
+        toast("Connecting to Gmail…");
+        await connectGmail();
+      }
+      toast("Sending…");
+      await gmailSend(c.email, invoiceEmailSubject(inv), invoiceEmailHtml(inv));
+      if (inv.status !== "paid") inv.status = "sent";
+      save(); render();
+      toast(`Invoice ${inv.number} emailed to ${c.email} 🎉`);
+      openInvoiceDetail(id);
+    } catch (err) {
+      console.warn(err);
+      toast(err.message || "Could not send via Gmail");
     }
   }
 
@@ -1018,21 +1359,13 @@
     const monthLabel = calCursor.toLocaleDateString("en-US", { month: "long", year: "numeric" });
     const firstDow = new Date(y, m, 1).getDay();
     const daysInMonth = new Date(y, m + 1, 0).getDate();
-    const daysInPrev = new Date(y, m, 0).getDate();
     const today = todayISO();
 
-    // Build 6 weeks of cells.
     const cells = [];
     for (let i = 0; i < 42; i++) {
-      const dayOffset = i - firstDow;
-      let cy = y, cm = m, cd;
-      let other = false;
-      if (dayOffset < 0) { cd = daysInPrev + dayOffset + 1; cm = m - 1; other = true; }
-      else if (dayOffset >= daysInMonth) { cd = dayOffset - daysInMonth + 1; cm = m + 1; other = true; }
-      else cd = dayOffset + 1;
-      const dt = new Date(cy, cm, cd);
+      const dt = new Date(y, m, i - firstDow + 1);
       const iso = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
-      cells.push({ iso, day: dt.getDate(), other });
+      cells.push({ iso, day: dt.getDate(), other: dt.getMonth() !== m });
     }
 
     const eventsByDate = {};
@@ -1106,12 +1439,20 @@
             <div class="field"><label>Email</label><input name="email" type="email" value="${escapeHtml(s.email)}"></div>
             <div class="field"><label>Phone</label><input name="phone" value="${escapeHtml(s.phone)}"></div>
             <div class="field full"><label>Business address</label><input name="address" value="${escapeHtml(s.address)}"></div>
+            <div class="field"><label>Invoice logo text</label><input name="logoText" value="${escapeHtml(s.logoText)}" placeholder="RND"></div>
+            <div class="field"><label>Invoice logo image</label>
+              <input type="file" id="logoImgInput" accept="image/*">
+              ${s.logoImg ? `<button type="button" class="btn btn-sm" id="clearLogoImg" style="margin-top:6px">✕ Remove image</button>` : ""}
+            </div>
             <div class="field"><label>Invoice prefix</label><input name="invoicePrefix" value="${escapeHtml(s.invoicePrefix)}"></div>
             <div class="field"><label>Next invoice number</label><input name="nextInvoiceNumber" type="number" min="1" value="${escapeHtml(s.nextInvoiceNumber)}"></div>
             <div class="field"><label>Default tax rate (%)</label><input name="taxRate" type="number" min="0" step="0.01" value="${escapeHtml(s.taxRate)}"></div>
             <div class="field"><label>Default payment terms (days)</label><input name="defaultDueDays" type="number" min="0" value="${escapeHtml(s.defaultDueDays)}"></div>
             <div class="field full"><label>Default invoice notes / payment instructions</label>
               <textarea name="paymentInstructions">${escapeHtml(s.paymentInstructions)}</textarea>
+            </div>
+            <div class="field full"><label>Default hotel &amp; parking clause</label>
+              <textarea name="hotelText" rows="4">${escapeHtml(s.hotelText)}</textarea>
             </div>
           </div>
           <div class="modal-actions" style="justify-content:flex-start">
@@ -1121,8 +1462,30 @@
       </div>
 
       <div class="card card-pad" style="max-width:720px;margin-top:20px">
+        <div class="card-title">📨 Gmail — send invoices from the site</div>
+        <p class="settings-note">
+          Connect your Google account to email invoices to clients directly from this site (no mail app needed).
+          One-time setup: create a free OAuth Client ID in
+          <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a>
+          (see the README for a 5-minute walkthrough), paste it below, then hit Connect.
+        </p>
+        <div class="form-grid">
+          <div class="field full"><label>Google OAuth Client ID</label>
+            <input id="googleClientId" value="${escapeHtml(s.googleClientId)}" placeholder="1234567890-abc123.apps.googleusercontent.com">
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap">
+          <button class="btn btn-primary" id="gmailConnect">${gmailReady() ? "Reconnect Gmail" : "Connect Gmail"}</button>
+          ${gmailReady() ? `<button class="btn" id="gmailDisconnect">Disconnect</button>` : ""}
+          <span class="settings-note" id="gmailStatus" style="margin:0">
+            ${gmailReady() ? "✅ Connected — you can send invoices via Gmail" : "Not connected"}
+          </span>
+        </div>
+      </div>
+
+      <div class="card card-pad" style="max-width:720px;margin-top:20px">
         <div class="card-title">Data backup</div>
-        <p style="font-size:13.5px;color:var(--muted);margin-bottom:14px">
+        <p class="settings-note">
           Your data lives in this browser only. Export a backup file regularly, and import it to restore or move to another device.
         </p>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -1140,7 +1503,44 @@
       data.nextInvoiceNumber = Number(data.nextInvoiceNumber) || 1;
       data.defaultDueDays = Number(data.defaultDueDays) || 14;
       Object.assign(state.settings, data);
+      state.settings.googleClientId = $("#googleClientId", root).value.trim();
       save(); toast("Settings saved");
+    });
+
+    $("#logoImgInput", root).addEventListener("change", e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (file.size > 400 * 1024) { toast("Logo image too large — keep it under 400 KB"); return; }
+      const reader = new FileReader();
+      reader.onload = () => {
+        state.settings.logoImg = reader.result;
+        save(); renderSettings(root); toast("Logo image saved");
+      };
+      reader.readAsDataURL(file);
+    });
+    $("#clearLogoImg", root)?.addEventListener("click", () => {
+      state.settings.logoImg = "";
+      save(); renderSettings(root); toast("Logo image removed");
+    });
+
+    $("#gmailConnect", root).addEventListener("click", async () => {
+      state.settings.googleClientId = $("#googleClientId", root).value.trim();
+      save();
+      const status = $("#gmailStatus", root);
+      try {
+        status.textContent = "Opening Google sign-in…";
+        await connectGmail();
+        status.textContent = "✅ Connected — you can send invoices via Gmail";
+        toast("Gmail connected 🎉");
+        renderSettings(root);
+      } catch (err) {
+        status.textContent = "⚠️ " + err.message;
+      }
+    });
+    $("#gmailDisconnect", root)?.addEventListener("click", () => {
+      disconnectGmail();
+      renderSettings(root);
+      toast("Gmail disconnected");
     });
 
     $("#exportData", root).addEventListener("click", () => {
@@ -1167,7 +1567,7 @@
             settings: { ...defaultSettings(), ...data.settings },
             clients: data.clients || [],
             events: data.events || [],
-            invoices: data.invoices || [],
+            invoices: (data.invoices || []).map(migrateInvoice),
           };
           save(); render(); toast("Backup imported");
         } catch {
@@ -1196,12 +1596,12 @@
 
     const c1 = { id: uid(), name: "Sarah Johnson", email: "sarah.j@example.com", phone: "(555) 201-8834", company: "", source: "Instagram", notes: "Getting married! Loves 90s R&B and Motown. Do-not-play: Chicken Dance.", createdAt: iso(-60) };
     const c2 = { id: uid(), name: "Marcus Lee", email: "marcus@brightpath.example.com", phone: "(555) 448-2210", company: "BrightPath Marketing", source: "Referral from past client", notes: "Corporate contact — books quarterly staff parties.", createdAt: iso(-40) };
-    const c3 = { id: uid(), name: "Emily Torres", email: "emtorres@example.com", phone: "(555) 917-6642", company: "", source: "Google search", notes: "Daughter's quinceañera. Wants lots of reggaeton and a strong MC presence.", createdAt: iso(-15) };
+    const c3 = { id: uid(), name: "Priya Singh", email: "priya.s@example.com", phone: "(555) 917-6642", company: "", source: "Google search", notes: "Multi-day wedding: Mehndi, Sangeet, Baraat, Ceremony, Reception. Big production!", createdAt: iso(-15) };
     state.clients.push(c1, c2, c3);
 
     const e1 = { id: uid(), clientId: c1.id, title: "Johnson Wedding Reception", type: "Wedding", date: iso(18), startTime: "17:00", endTime: "23:00", venue: "The Grand Ballroom", address: "220 Harbor View Dr", guestCount: "140", fee: 1800, status: "booked", needs: "Ceremony audio + reception. Uplighting (blush). First dance: 'At Last'. MC for toasts and cake cutting.", notes: "Load in 3pm via service elevator. Coordinator: Dana (555) 300-1123." };
     const e2 = { id: uid(), clientId: c2.id, title: "BrightPath Summer Party", type: "Corporate", date: iso(32), startTime: "18:30", endTime: "22:30", venue: "Rooftop at The Meridian", address: "88 5th Ave", guestCount: "75", fee: 1200, status: "booked", needs: "Open-format set, clean edits only. Wireless mic for CEO welcome speech.", notes: "" };
-    const e3 = { id: uid(), clientId: c3.id, title: "Torres Quinceañera", type: "Private Party", date: iso(9), startTime: "16:00", endTime: "22:00", venue: "Casa Bella Events", address: "412 Sunset Blvd", guestCount: "110", fee: 1100, status: "inquiry", needs: "Bilingual MC, court dance choreography track, lots of reggaeton + cumbia.", notes: "Waiting on signed contract & deposit." };
+    const e3 = { id: uid(), clientId: c3.id, title: "Singh Wedding — Sangeet", type: "Sangeet", date: iso(9), startTime: "16:00", endTime: "23:00", venue: "Casa Bella Events", address: "412 Sunset Blvd", guestCount: "350", fee: 1600, status: "inquiry", needs: "Full sound package, LED dandiya sticks, bilingual MC.", notes: "Waiting on signed contract & deposit. Part of multi-day booking." };
     const e4 = { id: uid(), clientId: c1.id, title: "Johnson Engagement Party", type: "Private Party", date: iso(-45), startTime: "19:00", endTime: "23:00", venue: "Private residence", address: "", guestCount: "50", fee: 600, status: "completed", needs: "", notes: "Went great — led to wedding booking." };
     state.events.push(e1, e2, e3, e4);
 
@@ -1213,23 +1613,45 @@
       {
         id: uid(), number: num(), clientId: c1.id, eventId: e4.id, status: "paid",
         issueDate: iso(-44), dueDate: iso(-30), paidDate: iso(-38),
-        items: [{ desc: "DJ services — Engagement Party (4 hours)", qty: 1, rate: 600 }],
-        taxRate: 0, discount: 0, notes: "Thank you!",
+        groups: [{ name: "Engagement Party", items: [{ name: "DJ services — 4 hours", qty: 1, price: 600, comp: false, details: [] }] }],
+        discounts: [], hotelEnabled: false, hotelText: "",
+        taxRate: 0, notes: "Thank you!",
       },
       {
         id: uid(), number: num(), clientId: c1.id, eventId: e1.id, status: "sent",
         issueDate: iso(-10), dueDate: iso(4),
-        items: [
-          { desc: "Wedding DJ package — ceremony + reception (6 hours)", qty: 1, rate: 1500 },
-          { desc: "Uplighting package (8 fixtures)", qty: 1, rate: 300 },
-        ],
-        taxRate: 0, discount: 0, notes: "50% deposit received. Balance due before event date.",
+        groups: [{
+          name: "Wedding Reception",
+          items: [
+            { name: "Wedding DJ package — ceremony + reception (6 hours)", qty: 1, price: 1500, comp: false, details: [
+              { name: "RCF 945", qty: 2 }, { name: "Wireless Microphone", qty: 2 }, { name: "Facade", qty: 1 },
+            ] },
+            { name: "Uplighting package (8 fixtures)", qty: 1, price: 300, comp: false, details: [] },
+            { name: "Cocktail hour speaker", qty: 1, price: 0, comp: true, details: [] },
+          ],
+        }],
+        discounts: [], hotelEnabled: false, hotelText: "",
+        taxRate: 0, notes: "50% deposit received. Balance due before event date.",
       },
       {
-        id: uid(), number: num(), clientId: c2.id, eventId: e2.id, status: "draft",
+        id: uid(), number: num(), clientId: c3.id, eventId: e3.id, status: "draft",
         issueDate: iso(0), dueDate: iso(14),
-        items: [{ desc: "Corporate event DJ — 4 hours", qty: 1, rate: 1200 }],
-        taxRate: 0, discount: 0, notes: state.settings.paymentInstructions,
+        groups: [
+          {
+            name: "Sangeet (350 People)",
+            items: [{ name: "Sound Package", qty: 1, price: 1600, comp: false, details: [
+              { name: "RCF 945", qty: 2 }, { name: "RCF SUB 708", qty: 2 },
+              { name: "Wireless Microphone", qty: 2 }, { name: "Facade", qty: 1 },
+            ] }, { name: "LED Dandiya Sticks", qty: 1, price: 0, comp: true, details: [] }],
+          },
+          {
+            name: "Travel + Labor",
+            items: [{ name: "Travel + Labor", qty: 1, price: 500, comp: false, details: [] }],
+          },
+        ],
+        discounts: [{ name: "Multiple Day", amount: 350 }],
+        hotelEnabled: true, hotelText: state.settings.hotelText,
+        taxRate: 0, notes: state.settings.paymentInstructions,
       },
     );
     state.settings.nextInvoiceNumber = n;
