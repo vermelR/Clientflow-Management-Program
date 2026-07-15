@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DJ ClientFlow — Client & Invoice Manager</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">🎧</div>
+        <div class="brand-text">
+          <div class="brand-name" id="sidebarBizName">DJ ClientFlow</div>
+          <div class="brand-sub">Client &amp; Invoice Manager</div>
+        </div>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-view="dashboard"><span class="nav-icon">📊</span> Dashboard</button>
+        <button class="nav-item" data-view="clients"><span class="nav-icon">👥</span> Clients</button>
+        <button class="nav-item" data-view="events"><span class="nav-icon">🎶</span> Gigs &amp; Events</button>
+        <button class="nav-item" data-view="invoices"><span class="nav-icon">📄</span> Invoices</button>
+        <button class="nav-item" data-view="calendar"><span class="nav-icon">📅</span> Calendar</button>
+        <button class="nav-item" data-view="settings"><span class="nav-icon">⚙️</span> Settings</button>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="hint">All data is saved automatically in this browser. Back it up anytime from Settings.</div>
+      </div>
+    </aside>
+
+    <main class="main" id="main">
+      <!-- Views are rendered here by app.js -->
+    </main>
+  </div>
+
+  <!-- Modal -->
+  <div class="modal-overlay hidden" id="modalOverlay">
+    <div class="modal" id="modal" role="dialog" aria-modal="true"></div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast hidden" id="toast"></div>
+
+  <!-- Printable invoice (only visible when printing) -->
+  <div id="printArea" class="print-area"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
