@@ -18,7 +18,9 @@ A simple, HoneyBook-style client & invoice manager built for DJs. Track clients,
 No install, no server, no account. It's a static web app:
 
 1. **Open `index.html` in your browser** — that's it.
-2. Or host it for free with **GitHub Pages**: repo *Settings → Pages → Deploy from branch*, pick your branch, and open the URL on any device.
+2. Or host it for free with **GitHub Pages** — a deploy workflow is already included (`.github/workflows/deploy-pages.yml`). One-time setup: go to repo **Settings → Pages** and set **Source** to **GitHub Actions**. From then on, every push deploys automatically to:
+
+   **https://vermelr.github.io/Clientflow-Management-Program/**
 
 On first launch, click **"Load sample data"** to explore with realistic example clients, gigs, and invoices — or jump straight in and add your first client.
 
