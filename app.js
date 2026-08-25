@@ -42,7 +42,7 @@
         g.items = g.items || [];
         g.items.forEach(it => { it.details = it.details || []; });
       });
-      return inv;
+      return withPayments(inv);
     }
     const items = (inv.items || []).map(it => ({
       name: it.desc || "", qty: Number(it.qty) || 1,
@@ -57,25 +57,59 @@
     };
     delete migrated.items;
     delete migrated.discount;
-    return migrated;
+    return withPayments(migrated);
+  }
+
+  // Invoices predating payment tracking: a "paid" one gets a single
+  // payment record for its full total so revenue math still adds up.
+  function withPayments(inv) {
+    if (!Array.isArray(inv.payments)) inv.payments = [];
+    if (inv.status === "paid" && !inv.payments.length) {
+      inv.payments.push({
+        id: uid(),
+        date: inv.paidDate || inv.issueDate || todayISO(),
+        amount: invTotal(inv),
+        method: "",
+        note: "Paid in full",
+      });
+    }
+    return inv;
   }
 
   let state = load();
 
-  function load() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        return {
-          settings: { ...defaultSettings(), ...(parsed.settings || {}) },
-          clients: parsed.clients || [],
-          events: parsed.events || [],
-          invoices: (parsed.invoices || []).map(migrateInvoice),
-        };
-      }
-    } catch (e) { console.error("Failed to load data", e); }
+  function emptyState() {
     return { settings: defaultSettings(), clients: [], events: [], invoices: [] };
+  }
+
+  function load() {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return emptyState();
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      // Never silently discard saved work: stash the unreadable copy
+      // under its own key so it can still be recovered by hand.
+      console.error("Saved data could not be parsed", e);
+      try { localStorage.setItem(STORAGE_KEY + ".corrupt", raw); } catch { /* quota */ }
+      return emptyState();
+    }
+
+    const base = {
+      settings: { ...defaultSettings(), ...(parsed.settings || {}) },
+      clients: parsed.clients || [],
+      events: parsed.events || [],
+      invoices: parsed.invoices || [],
+    };
+    try {
+      base.invoices = base.invoices.map(migrateInvoice);
+    } catch (e) {
+      // Keep the records as-is rather than losing them to a migration bug.
+      console.error("Invoice migration failed — loading records unmigrated", e);
+    }
+    return base;
   }
 
   function save() {
@@ -88,7 +122,11 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
-  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  // Declared as a hoisted function: load() runs before this point and
+  // migration needs it to mint ids for synthesized payment records.
+  function uid() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
 
   function escapeHtml(s) {
     return String(s ?? "").replace(/[&<>"']/g, c => ({
@@ -163,14 +201,31 @@
   }
   function invTotal(inv) { return invSubtotal(inv) + invTax(inv) - invDiscountTotal(inv); }
 
-  // "sent" invoices past their due date display as overdue.
+  /* ---------------- Payments (deposits & partial payments) ---------------- */
+
+  function invPaid(inv) {
+    return (inv.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  }
+  // Rounded to cents so float dust never leaves a $0.00 balance "unpaid".
+  function invBalance(inv) {
+    return Math.round((invTotal(inv) - invPaid(inv)) * 100) / 100;
+  }
+  function isFullyPaid(inv) { return invBalance(inv) <= 0; }
+
+  const PAYMENT_METHODS = ["Venmo", "Zelle", "Cash", "Check", "Credit card", "Bank transfer", "PayPal", "Other"];
+
+  // Derived display status: a deposit makes an invoice "partial",
+  // and anything past its due date with a balance is "overdue".
   function invStatus(inv) {
-    if (inv.status === "sent" && inv.dueDate && inv.dueDate < todayISO()) return "overdue";
+    if (isFullyPaid(inv) && invPaid(inv) > 0) return "paid";
+    if (inv.status === "draft") return "draft";
+    if (inv.dueDate && inv.dueDate < todayISO()) return "overdue";
+    if (invPaid(inv) > 0) return "partial";
     return inv.status;
   }
 
   const STATUS_LABEL = {
-    draft: "Draft", sent: "Sent", paid: "Paid", overdue: "Overdue",
+    draft: "Draft", sent: "Sent", paid: "Paid", overdue: "Overdue", partial: "Partial",
     inquiry: "Inquiry", booked: "Booked", completed: "Completed", cancelled: "Cancelled",
   };
 
@@ -259,15 +314,19 @@
       .filter(e => e.date >= today && e.status !== "cancelled" && e.status !== "completed")
       .sort((a, b) => a.date.localeCompare(b.date));
 
+    // Money actually received this year, deposits included.
     const paidThisYear = state.invoices
-      .filter(i => i.status === "paid" && (i.paidDate || i.issueDate || "").startsWith(String(year)))
-      .reduce((s, i) => s + invTotal(i), 0);
+      .flatMap(i => i.payments || [])
+      .filter(p => (p.date || "").startsWith(String(year)))
+      .reduce((s, p) => s + (Number(p.amount) || 0), 0);
 
+    // What's still owed on anything sent out, net of deposits.
     const outstanding = state.invoices
-      .filter(i => invStatus(i) === "sent" || invStatus(i) === "overdue")
-      .reduce((s, i) => s + invTotal(i), 0);
+      .filter(i => i.status !== "draft" && !isFullyPaid(i))
+      .reduce((s, i) => s + invBalance(i), 0);
 
     const overdueCount = state.invoices.filter(i => invStatus(i) === "overdue").length;
+    const depositCount = state.invoices.filter(i => invStatus(i) === "partial").length;
 
     const recentInvoices = [...state.invoices]
       .sort((a, b) => (b.issueDate || "").localeCompare(a.issueDate || ""))
@@ -306,12 +365,12 @@
         <div class="card stat">
           <div class="stat-label">Collected in ${year}</div>
           <div class="stat-value pos">${money(paidThisYear)}</div>
-          <div class="stat-note">Paid invoices</div>
+          <div class="stat-note">Payments &amp; deposits received</div>
         </div>
         <div class="card stat">
-          <div class="stat-label">Outstanding</div>
+          <div class="stat-label">Outstanding balance</div>
           <div class="stat-value ${outstanding > 0 ? "warn" : ""}">${money(outstanding)}</div>
-          <div class="stat-note">${overdueCount ? `⚠️ ${overdueCount} overdue` : "Awaiting payment"}</div>
+          <div class="stat-note">${overdueCount ? `⚠️ ${overdueCount} overdue` : depositCount ? `${depositCount} partly paid` : "Awaiting payment"}</div>
         </div>
         <div class="card stat">
           <div class="stat-label">Clients</div>
@@ -346,7 +405,7 @@
                 <tr class="clickable" data-open-invoice="${i.id}">
                   <td class="nowrap">${escapeHtml(i.number)}</td>
                   <td>${escapeHtml(clientName(i.clientId))}<span class="sub">${fmtDate(i.issueDate)}</span></td>
-                  <td class="right nowrap">${money(invTotal(i))}</td>
+                  <td class="right nowrap">${money(invTotal(i))}${invPaid(i) > 0 && !isFullyPaid(i) ? `<span class="sub">${money(invBalance(i))} left</span>` : ""}</td>
                   <td>${badge(invStatus(i))}</td>
                 </tr>`).join("")}
             </tbody></table></div>`
@@ -399,8 +458,8 @@
           <tbody>
             ${list.map(c => {
               const gigs = state.events.filter(e => e.clientId === c.id);
-              const paid = state.invoices.filter(i => i.clientId === c.id && i.status === "paid")
-                .reduce((s, i) => s + invTotal(i), 0);
+              const paid = state.invoices.filter(i => i.clientId === c.id)
+                .reduce((s, i) => s + invPaid(i), 0);
               return `
               <tr class="clickable" data-open-client="${c.id}">
                 <td><strong>${escapeHtml(c.name)}</strong>${c.company ? `<span class="sub">${escapeHtml(c.company)}</span>` : ""}</td>
@@ -479,7 +538,8 @@
     if (!c) return;
     const gigs = state.events.filter(e => e.clientId === id).sort((a, b) => b.date.localeCompare(a.date));
     const invs = state.invoices.filter(i => i.clientId === id).sort((a, b) => (b.issueDate || "").localeCompare(a.issueDate || ""));
-    const paid = invs.filter(i => i.status === "paid").reduce((s, i) => s + invTotal(i), 0);
+    const paid = invs.reduce((s, i) => s + invPaid(i), 0);
+    const owed = invs.filter(i => i.status !== "draft").reduce((s, i) => s + Math.max(0, invBalance(i)), 0);
 
     openModal(modalShell(c.name, `
       <div class="detail-grid">
@@ -488,6 +548,7 @@
         <div class="detail-item"><div class="lbl">Company</div><div class="val">${escapeHtml(c.company || "—")}</div></div>
         <div class="detail-item"><div class="lbl">Source</div><div class="val">${escapeHtml(c.source || "—")}</div></div>
         <div class="detail-item"><div class="lbl">Lifetime paid</div><div class="val"><strong>${money(paid)}</strong></div></div>
+        ${owed > 0 ? `<div class="detail-item"><div class="lbl">Still owed</div><div class="val"><strong style="color:var(--amber)">${money(owed)}</strong></div></div>` : ""}
       </div>
       ${c.notes ? `<div class="section-label">Notes</div><div class="notes-box">${escapeHtml(c.notes)}</div>` : ""}
 
@@ -501,7 +562,9 @@
       <div class="section-label">Invoices (${invs.length})</div>
       ${invs.length ? `<div class="table-wrap"><table><tbody>
         ${invs.map(i => `<tr class="clickable" data-open-invoice="${i.id}">
-          <td class="nowrap">${escapeHtml(i.number)}</td><td class="right nowrap">${money(invTotal(i))}</td><td>${badge(invStatus(i))}</td>
+          <td class="nowrap">${escapeHtml(i.number)}</td>
+          <td class="right nowrap">${money(invTotal(i))}${invPaid(i) > 0 && !isFullyPaid(i) ? `<span class="sub">${money(invBalance(i))} left</span>` : ""}</td>
+          <td>${badge(invStatus(i))}</td>
         </tr>`).join("")}
       </tbody></table></div>` : `<div class="notes-box">No invoices yet for this client.</div>`}
 
@@ -685,13 +748,17 @@
     if (invoiceFilter !== "all") list = list.filter(i => invStatus(i) === invoiceFilter);
     list.sort((a, b) => (b.issueDate || "").localeCompare(a.issueDate || ""));
 
-    const chips = [["all", "All"], ["draft", "Drafts"], ["sent", "Sent"], ["overdue", "Overdue"], ["paid", "Paid"]];
+    const chips = [["all", "All"], ["draft", "Drafts"], ["sent", "Sent"], ["partial", "Partly paid"], ["overdue", "Overdue"], ["paid", "Paid"]];
+
+    const totalOwed = state.invoices
+      .filter(i => i.status !== "draft" && !isFullyPaid(i))
+      .reduce((s, i) => s + invBalance(i), 0);
 
     root.innerHTML = `
       <div class="view-header">
         <div>
           <div class="view-title">Invoices</div>
-          <div class="view-sub">RND-style invoices — create, send and track payments</div>
+          <div class="view-sub">${totalOwed > 0 ? `<strong>${money(totalOwed)}</strong> still owed across open invoices` : "Everything is paid up — nice work!"}</div>
         </div>
         <div class="header-actions">
           <button class="btn btn-primary" id="addInvoice">+ New invoice</button>
@@ -704,18 +771,23 @@
 
       <div class="card">
         ${list.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>#</th><th>Client</th><th>Issued</th><th>Due</th><th class="right">Amount</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>#</th><th>Client</th><th>Issued</th><th>Due</th><th class="right">Total</th><th class="right">Paid</th><th class="right">Balance</th><th>Status</th><th></th></tr></thead>
           <tbody>
-            ${list.map(i => `
+            ${list.map(i => {
+              const paid = invPaid(i), bal = invBalance(i);
+              return `
               <tr class="clickable" data-open-invoice="${i.id}">
                 <td class="nowrap"><strong>${escapeHtml(i.number)}</strong></td>
                 <td>${escapeHtml(clientName(i.clientId))}${i.eventId && eventById(i.eventId) ? `<span class="sub">${escapeHtml(eventById(i.eventId).title)}</span>` : ""}</td>
                 <td class="nowrap">${fmtDate(i.issueDate)}</td>
                 <td class="nowrap">${fmtDate(i.dueDate)}</td>
-                <td class="right nowrap"><strong>${money(invTotal(i))}</strong></td>
+                <td class="right nowrap">${money(invTotal(i))}</td>
+                <td class="right nowrap ${paid > 0 ? "amt-paid" : "amt-none"}">${paid > 0 ? money(paid) : "—"}</td>
+                <td class="right nowrap"><strong class="${bal > 0 ? "amt-due" : "amt-paid"}">${bal > 0 ? money(bal) : "—"}</strong></td>
                 <td>${badge(invStatus(i))}</td>
                 <td class="right nowrap"><button class="btn btn-sm" data-edit-invoice="${i.id}">Edit</button></td>
-              </tr>`).join("")}
+              </tr>`;
+            }).join("")}
           </tbody></table></div>`
         : `<div class="empty-state"><div class="big">📄</div><p>No invoices here yet.</p>
            <button class="btn btn-primary" id="emptyAddInvoice">+ New invoice</button></div>`}
@@ -1040,6 +1112,15 @@
       rows += `<tr class="row-event"><td colspan="3">Tax (${inv.taxRate}%)</td><td>${money(invTax(inv))}</td></tr>`;
     }
 
+    const payments = inv.payments || [];
+    if (payments.length) {
+      rows += `<tr class="row-discount-group"><td colspan="3">Payments Received</td><td>−${money(invPaid(inv))}</td></tr>`;
+      payments.forEach(p => {
+        const label = [p.note || "Payment", fmtDate(p.date), p.method].filter(Boolean).join(" · ");
+        rows += `<tr class="row-payment"><td colspan="3">${escapeHtml(label)}</td><td>−${money(Number(p.amount) || 0)}</td></tr>`;
+      });
+    }
+
     if (inv.hotelEnabled && inv.hotelText) {
       rows += `<tr class="row-hotel"><td class="hotel-label">Hotel &amp; Parking<br>Accommodations</td><td colspan="3">${escapeHtml(inv.hotelText)}</td></tr>`;
     }
@@ -1063,7 +1144,8 @@
           <div class="rnd-meta-item">Invoice ${escapeHtml(inv.number || "—")}</div>
           <div class="rnd-meta-item">Issued On: ${fmtDate(inv.issueDate)}</div>
           <div class="rnd-meta-item">Due Date: ${fmtDate(inv.dueDate)}</div>
-          ${status === "paid" ? `<div class="rnd-meta-item rnd-paid">PAID ${inv.paidDate ? fmtDate(inv.paidDate) : ""}</div>` : ""}
+          ${status === "paid" ? `<div class="rnd-meta-item rnd-paid">PAID ${inv.paidDate ? fmtDate(inv.paidDate) : ""}</div>`
+            : payments.length ? `<div class="rnd-meta-item rnd-partial">DEPOSIT RECEIVED</div>` : ""}
         </div>
         <div class="rnd-parties">
           <div>
@@ -1086,8 +1168,9 @@
         </table>
         ${inv.notes ? `<div class="rnd-notes">${escapeHtml(inv.notes).replace(/\n/g, "<br>")}</div>` : ""}
         <div class="rnd-total">
-          <span class="rnd-total-label">Amount Due:</span>
-          <span class="rnd-total-val">${money(invTotal(inv))}</span>
+          ${payments.length ? `<span class="rnd-total-sub">Invoice total ${money(invTotal(inv))} &nbsp;·&nbsp; Received ${money(invPaid(inv))}</span>` : ""}
+          <span class="rnd-total-label">${isFullyPaid(inv) && invPaid(inv) > 0 ? "Paid in Full:" : payments.length ? "Balance Due:" : "Amount Due:"}</span>
+          <span class="rnd-total-val">${money(isFullyPaid(inv) && invPaid(inv) > 0 ? invTotal(inv) : invBalance(inv))}</span>
         </div>
         <div class="rnd-footer">
           <div class="rnd-footer-logo">${logoHtml()}</div>
@@ -1107,14 +1190,47 @@
     const status = invStatus(inv);
     const gmailOn = !!state.settings.googleClientId;
 
+    const total = invTotal(inv), paid = invPaid(inv), balance = invBalance(inv);
+    const payments = [...(inv.payments || [])].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+    const pct = total > 0 ? Math.max(0, Math.min(100, (paid / total) * 100)) : 0;
+
     openModal(modalShell(`Invoice ${inv.number}`, `
       <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         ${badge(status)}
-        <span style="color:var(--muted);font-size:13px">${c ? "Billed to " + escapeHtml(c.name) : ""}${inv.paidDate ? " · paid " + fmtDate(inv.paidDate) : ""}</span>
+        <span style="color:var(--muted);font-size:13px">${c ? "Billed to " + escapeHtml(c.name) : ""}${inv.paidDate ? " · paid in full " + fmtDate(inv.paidDate) : ""}</span>
       </div>
+
+      <div class="pay-panel">
+        <div class="pay-summary">
+          <div class="pay-stat"><div class="lbl">Invoice total</div><div class="val">${money(total)}</div></div>
+          <div class="pay-stat"><div class="lbl">Received</div><div class="val pos">${money(paid)}</div></div>
+          <div class="pay-stat"><div class="lbl">Balance due</div><div class="val ${balance > 0 ? "warn" : "pos"}">${money(Math.max(0, balance))}</div></div>
+        </div>
+        ${paid > 0 ? `<div class="pay-bar"><div class="pay-bar-fill" style="width:${pct}%"></div></div>
+          <div class="pay-bar-note">${pct >= 100 ? "Paid in full 🎉" : `${Math.round(pct)}% collected`}</div>` : ""}
+
+        ${payments.length ? `<div class="table-wrap"><table class="pay-table">
+          <thead><tr><th>Date</th><th>Description</th><th>Method</th><th class="right">Amount</th><th></th></tr></thead>
+          <tbody>
+            ${payments.map(p => `<tr>
+              <td class="nowrap">${fmtDate(p.date)}</td>
+              <td>${escapeHtml(p.note || "Payment")}</td>
+              <td>${escapeHtml(p.method || "—")}</td>
+              <td class="right nowrap amt-paid">${money(Number(p.amount) || 0)}</td>
+              <td class="right"><button class="remove-line" data-del-payment="${p.id}" title="Delete this payment">✕</button></td>
+            </tr>`).join("")}
+          </tbody></table></div>`
+        : `<div class="pay-empty">No payments recorded yet. Log a deposit as soon as it lands so the balance stays accurate.</div>`}
+
+        ${balance > 0 ? `<div class="pay-actions">
+          <button class="btn btn-primary btn-sm" id="invAddPayment">+ Record payment / deposit</button>
+          ${!paid ? `<button class="btn btn-sm" id="invDeposit50">Log 50% deposit (${money(total / 2)})</button>` : ""}
+          <button class="btn btn-sm" id="invPayFull">Mark balance paid (${money(balance)})</button>
+        </div>` : `<div class="pay-actions"><button class="btn btn-sm" id="invAddPayment">+ Record another payment</button></div>`}
+      </div>
+
       <div class="doc-preview">${invoiceDocHtml(inv)}</div>
       <div class="modal-actions" style="flex-wrap:wrap">
-        ${status !== "paid" ? `<button class="btn" id="invMarkPaid">✓ Mark paid</button>` : ""}
         ${status === "draft" ? `<button class="btn" id="invMarkSent">Mark sent</button>` : ""}
         <button class="btn" id="invPrint">🖨 Print / PDF</button>
         ${c?.email ? `<button class="btn" id="invEmail">✉️ Email (mail app)</button>` : ""}
@@ -1124,11 +1240,18 @@
       ${!gmailOn && c?.email ? `<div class="gmail-hint">Tip: connect Gmail in <a href="#" id="goSettings">Settings</a> to send invoices directly from here.</div>` : ""}`), true);
 
     $("#invEdit").addEventListener("click", () => openInvoiceForm(id));
-    $("#invMarkPaid")?.addEventListener("click", () => {
-      inv.status = "paid";
-      inv.paidDate = todayISO();
-      save(); render(); openInvoiceDetail(id); toast("Marked as paid 🎉");
-    });
+    $("#invAddPayment")?.addEventListener("click", () => openPaymentForm(id));
+    $("#invDeposit50")?.addEventListener("click", () =>
+      openPaymentForm(id, { amount: Math.round((total / 2) * 100) / 100, note: "Deposit" }));
+    $("#invPayFull")?.addEventListener("click", () =>
+      openPaymentForm(id, { amount: balance, note: paid > 0 ? "Final balance" : "Paid in full" }));
+    $$("[data-del-payment]", $("#modal")).forEach(b => b.addEventListener("click", () => {
+      if (!confirm("Delete this payment record?")) return;
+      inv.payments = (inv.payments || []).filter(p => p.id !== b.dataset.delPayment);
+      // Deleting a payment can un-settle an invoice that was fully paid.
+      if (inv.status === "paid" && invBalance(inv) > 0) { inv.status = "sent"; delete inv.paidDate; }
+      save(); render(); openInvoiceDetail(id); toast("Payment deleted");
+    }));
     $("#invMarkSent")?.addEventListener("click", () => {
       inv.status = "sent";
       save(); render(); openInvoiceDetail(id); toast("Marked as sent");
@@ -1139,6 +1262,79 @@
     $("#goSettings")?.addEventListener("click", e => { e.preventDefault(); closeModal(); go("settings"); });
   }
 
+  function openPaymentForm(invId, preset = {}) {
+    const inv = invoiceById(invId);
+    if (!inv) return;
+    const balance = invBalance(inv);
+    const amount = preset.amount != null ? preset.amount : Math.max(0, balance);
+    const isFirst = !invPaid(inv);
+
+    openModal(modalShell("Record a payment", `
+      <form id="paymentForm">
+        <p class="settings-note" style="margin-bottom:16px">
+          Invoice ${escapeHtml(inv.number)} — ${escapeHtml(clientName(inv.clientId))}<br>
+          Total ${money(invTotal(inv))} · Balance due <strong>${money(Math.max(0, balance))}</strong>
+        </p>
+        <div class="form-grid">
+          <div class="field"><label>Amount received *</label>
+            <input name="amount" type="number" step="0.01" min="0.01" required value="${escapeHtml(amount || "")}" autofocus>
+          </div>
+          <div class="field"><label>Date received</label>
+            <input name="date" type="date" value="${todayISO()}">
+          </div>
+          <div class="field"><label>Payment method</label>
+            <select name="method">
+              <option value="">— Not specified —</option>
+              ${PAYMENT_METHODS.map(m => `<option ${preset.method === m ? "selected" : ""}>${m}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field"><label>Description</label>
+            <input name="note" value="${escapeHtml(preset.note || (isFirst ? "Deposit" : "Payment"))}" placeholder="Deposit, final balance…">
+          </div>
+        </div>
+        <div class="quick-amounts">
+          <span class="quick-label">Quick fill:</span>
+          <button type="button" class="chip" data-amt="${Math.round(invTotal(inv) * 0.25 * 100) / 100}">25% deposit</button>
+          <button type="button" class="chip" data-amt="${Math.round(invTotal(inv) * 0.5 * 100) / 100}">50% deposit</button>
+          <button type="button" class="chip" data-amt="${Math.max(0, balance)}">Full balance</button>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="cancelPayment">Cancel</button>
+          <button type="submit" class="btn btn-primary">Record payment</button>
+        </div>
+      </form>`));
+
+    const form = $("#paymentForm");
+    $("#cancelPayment").addEventListener("click", () => openInvoiceDetail(invId));
+    $$(".quick-amounts .chip", form).forEach(b => b.addEventListener("click", () => {
+      form.amount.value = b.dataset.amt;
+      form.amount.focus();
+    }));
+
+    form.addEventListener("submit", e => {
+      e.preventDefault();
+      const fd = Object.fromEntries(new FormData(form).entries());
+      const amt = Number(fd.amount);
+      if (!(amt > 0)) { toast("Enter an amount greater than zero"); return; }
+      inv.payments = inv.payments || [];
+      inv.payments.push({
+        id: uid(), date: fd.date || todayISO(), amount: amt,
+        method: fd.method || "", note: fd.note || "Payment",
+      });
+      // Settle the invoice automatically once nothing is left owing.
+      if (invBalance(inv) <= 0) {
+        inv.status = "paid";
+        inv.paidDate = fd.date || todayISO();
+      } else if (inv.status === "draft") {
+        inv.status = "sent";
+      }
+      save(); render(); openInvoiceDetail(invId);
+      toast(invBalance(inv) <= 0
+        ? `Paid in full 🎉 ${money(amt)} recorded`
+        : `${money(amt)} recorded — ${money(invBalance(inv))} still due`);
+    });
+  }
+
   function printInvoice(inv) {
     $("#printArea").innerHTML = invoiceDocHtml(inv);
     window.print();
@@ -1147,7 +1343,10 @@
   /* ---------- Email: mailto fallback ---------- */
 
   function invoiceEmailSubject(inv) {
-    return `Invoice ${inv.number} from ${state.settings.businessName} — ${money(invTotal(inv))}`;
+    const s = state.settings;
+    if (isFullyPaid(inv) && invPaid(inv) > 0) return `Invoice ${inv.number} from ${s.businessName} — paid in full, thank you!`;
+    if (invPaid(inv) > 0) return `Invoice ${inv.number} from ${s.businessName} — ${money(invBalance(inv))} balance due`;
+    return `Invoice ${inv.number} from ${s.businessName} — ${money(invTotal(inv))}`;
   }
 
   function invoiceEmailText(inv) {
@@ -1172,7 +1371,17 @@
     });
     (inv.discounts || []).forEach(d => lines.push(`  Discount — ${d.name}: −${money(d.amount)}`));
     if (Number(inv.taxRate) > 0) lines.push(`  Tax (${inv.taxRate}%): ${money(invTax(inv))}`);
-    lines.push(``, `Amount due: ${money(invTotal(inv))}`, ``);
+    lines.push(``, `Invoice total: ${money(invTotal(inv))}`);
+    (inv.payments || []).forEach(p =>
+      lines.push(`  ${p.note || "Payment"} received ${fmtDate(p.date)}${p.method ? ` (${p.method})` : ""}: −${money(p.amount)}`));
+    if (invPaid(inv) > 0) {
+      lines.push(isFullyPaid(inv)
+        ? `Paid in full — thank you! Nothing further is due.`
+        : `Balance due: ${money(invBalance(inv))}`);
+    } else {
+      lines.push(`Amount due: ${money(invTotal(inv))}`);
+    }
+    lines.push(``);
     if (inv.notes) lines.push(inv.notes, ``);
     lines.push(`Thank you!`, s.ownerName || s.businessName, s.phone || "");
     return lines.join("\n");
@@ -1271,6 +1480,10 @@
     if (Number(inv.taxRate) > 0) {
       rows += `<tr><td colspan="3" style="${rowStyle}">Tax (${inv.taxRate}%)</td><td style="${rowStyle}text-align:right;">${money(invTax(inv))}</td></tr>`;
     }
+    (inv.payments || []).forEach(p => {
+      const label = [p.note || "Payment", "received " + fmtDate(p.date), p.method].filter(Boolean).join(" · ");
+      rows += `<tr><td colspan="3" style="${rowStyle}color:#27ae60;">${escapeHtml(label)}</td><td style="${rowStyle}text-align:right;color:#27ae60;">−${money(Number(p.amount) || 0)}</td></tr>`;
+    });
 
     return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#222;">
       <div style="max-width:640px;margin:0 auto;background:#fff;">
@@ -1292,7 +1505,10 @@
           <tbody>${rows}</tbody>
         </table>
         <div style="background:#111;color:#fff;padding:14px 32px;text-align:right;font-size:16px;">
-          Amount Due: <strong style="font-size:20px;">${money(invTotal(inv))}</strong>
+          ${invPaid(inv) > 0 ? `<div style="font-size:12px;color:#aaa;margin-bottom:4px;">Invoice total ${money(invTotal(inv))} &nbsp;·&nbsp; Received ${money(invPaid(inv))}</div>` : ""}
+          ${isFullyPaid(inv) && invPaid(inv) > 0
+            ? `<span style="color:#27ae60;">Paid in Full:</span> <strong style="font-size:20px;color:#27ae60;">${money(invTotal(inv))}</strong>`
+            : `${invPaid(inv) > 0 ? "Balance Due" : "Amount Due"}: <strong style="font-size:20px;">${money(invBalance(inv))}</strong>`}
         </div>
         ${inv.hotelEnabled && inv.hotelText ? `<div style="padding:16px 32px 0;font-size:12px;color:#666;line-height:1.6;"><strong style="color:#e85d26;">Hotel &amp; Parking Accommodations:</strong><br>${escapeHtml(inv.hotelText)}</div>` : ""}
         ${inv.notes ? `<div style="padding:16px 32px 0;font-size:13px;color:#555;line-height:1.6;">${escapeHtml(inv.notes).replace(/\n/g, "<br>")}</div>` : ""}
@@ -1616,6 +1832,10 @@
         groups: [{ name: "Engagement Party", items: [{ name: "DJ services — 4 hours", qty: 1, price: 600, comp: false, details: [] }] }],
         discounts: [], hotelEnabled: false, hotelText: "",
         taxRate: 0, notes: "Thank you!",
+        payments: [
+          { id: uid(), date: iso(-52), amount: 200, method: "Venmo", note: "Deposit" },
+          { id: uid(), date: iso(-38), amount: 400, method: "Zelle", note: "Final balance" },
+        ],
       },
       {
         id: uid(), number: num(), clientId: c1.id, eventId: e1.id, status: "sent",
@@ -1632,6 +1852,7 @@
         }],
         discounts: [], hotelEnabled: false, hotelText: "",
         taxRate: 0, notes: "50% deposit received. Balance due before event date.",
+        payments: [{ id: uid(), date: iso(-9), amount: 900, method: "Zelle", note: "50% deposit" }],
       },
       {
         id: uid(), number: num(), clientId: c3.id, eventId: e3.id, status: "draft",
@@ -1651,7 +1872,7 @@
         ],
         discounts: [{ name: "Multiple Day", amount: 350 }],
         hotelEnabled: true, hotelText: state.settings.hotelText,
-        taxRate: 0, notes: state.settings.paymentInstructions,
+        taxRate: 0, notes: state.settings.paymentInstructions, payments: [],
       },
     );
     state.settings.nextInvoiceNumber = n;

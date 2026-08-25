@@ -151,7 +151,47 @@ td .sub { display: block; font-size: 12px; color: var(--muted); margin-top: 2px;
 .badge-sent { background: var(--blue-soft); color: var(--blue); }
 .badge-draft, .badge-cancelled { background: var(--gray-soft); color: var(--muted); }
 .badge-overdue { background: var(--red-soft); color: var(--red); }
-.badge-inquiry { background: var(--amber-soft); color: var(--amber); }
+.badge-inquiry, .badge-partial { background: var(--amber-soft); color: var(--amber); }
+
+/* ---------- Payment amounts ---------- */
+.amt-paid { color: var(--green); }
+.amt-due { color: var(--amber); }
+.amt-none { color: var(--muted); }
+
+/* ---------- Payments panel (deposits & partial payments) ---------- */
+.pay-panel {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 10px; padding: 16px; margin-bottom: 18px;
+}
+.pay-summary { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 12px; }
+.pay-stat .lbl {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--muted); margin-bottom: 3px;
+}
+.pay-stat .val { font-size: 20px; font-weight: 700; }
+.pay-stat .val.pos { color: var(--green); }
+.pay-stat .val.warn { color: var(--amber); }
+
+.pay-bar {
+  height: 7px; background: var(--gray-soft); border-radius: 4px;
+  overflow: hidden; margin-bottom: 5px;
+}
+.pay-bar-fill { height: 100%; background: var(--green); border-radius: 4px; transition: width 0.3s; }
+.pay-bar-note { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+
+.pay-table { background: var(--card); border-radius: 8px; margin-bottom: 12px; }
+.pay-table th { padding: 8px 12px; }
+.pay-table td { padding: 9px 12px; font-size: 13px; }
+.pay-empty {
+  font-size: 13px; color: var(--muted); background: var(--card);
+  border-radius: 8px; padding: 14px; margin-bottom: 12px; line-height: 1.5;
+}
+.pay-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.quick-amounts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+.quick-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+.quick-amounts .chip { cursor: pointer; }
+.quick-amounts .chip:hover { border-color: var(--accent); color: var(--accent-dark); }
 
 /* ---------- Forms ---------- */
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -352,6 +392,7 @@ td .sub { display: block; font-size: 12px; color: var(--muted); margin-top: 2px;
 .rnd-meta-item { flex: 1; }
 .rnd-meta-item:not(:last-child) { border-right: 1px solid #ddd; padding-right: 20px; margin-right: 20px; }
 .rnd-paid { color: #27ae60; font-weight: 700; }
+.rnd-partial { color: #e85d26; font-weight: 700; }
 
 .rnd-parties {
   display: grid; grid-template-columns: 1fr 1fr;
@@ -376,6 +417,8 @@ tr.row-discount td { padding: 8px 16px 8px 32px; font-size: 12.5px; color: #c039
 tr.row-discount td:not(:first-child) { text-align: right; color: #c0392b; }
 tr.row-discount-group td { padding: 12px 16px 8px; font-weight: 700; font-size: 13px; color: #e85d26; border-bottom: 1.5px solid #3b7dd8; }
 tr.row-discount-group td:not(:first-child) { text-align: right; color: #e85d26; }
+tr.row-payment td { padding: 8px 16px 8px 32px; font-size: 12.5px; color: #27ae60; border-bottom: 1px solid #eee; }
+tr.row-payment td:not(:first-child) { text-align: right; color: #27ae60; }
 tr.row-hotel td { padding: 10px 16px; font-size: 11.5px; color: #555; line-height: 1.55; border-bottom: 1px solid #eee; }
 tr.row-hotel td.hotel-label { font-weight: 700; color: #e85d26; font-size: 13px; vertical-align: top; }
 
@@ -384,6 +427,7 @@ tr.row-hotel td.hotel-label { font-weight: 700; color: #e85d26; font-size: 13px;
   display: flex; justify-content: flex-end; align-items: center;
   background: #111; margin-top: 16px; padding: 14px 40px;
 }
+.rnd-total-sub { color: #aaa; font-size: 12px; margin-right: auto; }
 .rnd-total-label { color: #fff; font-weight: 700; font-size: 14px; margin-right: 24px; }
 .rnd-total-val { color: #fff; font-size: 18px; font-weight: 700; min-width: 80px; text-align: right; }
 

@@ -4,13 +4,16 @@ A simple, HoneyBook-style client & invoice manager built for DJs. Track clients,
 
 ## ✨ Features
 
-- **Dashboard** — upcoming gigs, money collected this year, outstanding invoices, and overdue alerts at a glance
+- **Dashboard** — upcoming gigs, money actually collected this year (deposits included), outstanding balances, and overdue alerts at a glance
 - **Clients** — contact info, how they found you, music preferences / do-not-play notes, plus each client's full gig & invoice history and lifetime revenue
 - **Gigs & Events** — track every booking (wedding, corporate, birthday, club night…) with venue, times, guest count, fee, client needs (equipment, special songs, MC duties) and internal notes. Statuses: Inquiry → Booked → Completed
 - **Invoices** — powered by the [RND Invoice Generator](https://github.com/vermelR/Invoice-Generator) format and design: events/sections with nested packages and included items, COMP toggles, named discounts, the hotel & parking clause, and the signature black/orange/blue RND layout. Plus auto-numbering and status tracking (Draft / Sent / Paid, with automatic Overdue detection). Create one straight from a gig and it pre-fills the fee.
+  - 💵 **Deposits & partial payments** — log each payment as it lands (amount, date, method, description) and the invoice tracks *Received* vs *Balance due* automatically, marking itself **Partial** and then **Paid** when the balance clears. One-tap buttons for a 25%/50% deposit or the full remaining balance.
   - 🖨 **Print / Save as PDF** — pixel-true RND invoice layout
   - 📨 **Send via Gmail** — connect your Google account and email invoices to clients directly from the site
   - ✉️ **Email (mail app)** — or open a pre-written email in your usual mail app
+
+  Printed and emailed invoices show every payment received and the remaining balance, so a client who paid a deposit sees exactly what's still owed.
 - **Calendar** — month view of all your gigs, color-coded by status
 - **Settings & Backup** — your business details for invoice headers, default payment terms, and one-click JSON export/import so your data is never locked in
 
