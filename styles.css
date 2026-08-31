@@ -35,6 +35,88 @@ body {
 
 .app { display: flex; min-height: 100vh; }
 
+/* ---------- Login / sign-up screen ---------- */
+.auth-screen {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  padding: 32px 16px;
+  background: radial-gradient(1100px 620px at 20% -10%, #2a1f5c 0%, #16122b 55%, #0f0c1e 100%);
+}
+.auth-card {
+  width: 400px; max-width: 100%; background: var(--card);
+  border-radius: 18px; padding: 34px 32px 26px; text-align: center;
+  box-shadow: 0 24px 70px rgba(8, 4, 30, 0.55);
+}
+.auth-logo {
+  width: 60px; height: 60px; margin: 0 auto 14px; border-radius: 16px;
+  background: linear-gradient(135deg, #7c5cff, #b84dff);
+  display: flex; align-items: center; justify-content: center; font-size: 30px;
+}
+.auth-brand { font-size: 21px; font-weight: 800; letter-spacing: -0.02em; }
+.auth-tagline { font-size: 13px; color: var(--muted); margin-top: 5px; }
+.auth-title {
+  font-size: 15px; font-weight: 700; margin: 24px 0 14px;
+  padding-top: 20px; border-top: 1px solid var(--border);
+}
+.auth-loading { color: var(--muted); font-size: 13.5px; margin-top: 22px; }
+.auth-screen .field { text-align: left; margin-bottom: 12px; }
+.auth-submit { width: 100%; justify-content: center; padding: 11px; font-size: 14.5px; margin-top: 4px; }
+.auth-submit:disabled { opacity: 0.6; cursor: default; }
+
+.auth-error, .auth-notice {
+  font-size: 12.5px; line-height: 1.5; padding: 10px 12px;
+  border-radius: 8px; margin-bottom: 14px; text-align: left;
+}
+.auth-error { background: var(--red-soft); color: var(--red); }
+.auth-notice { background: var(--green-soft); color: var(--green); }
+
+.auth-divider {
+  display: flex; align-items: center; gap: 12px;
+  color: var(--muted); font-size: 12px; margin: 16px 0;
+}
+.auth-divider::before, .auth-divider::after {
+  content: ""; flex: 1; height: 1px; background: var(--border);
+}
+.auth-google { width: 100%; justify-content: center; padding: 10px; font-size: 14px; }
+.g-mark {
+  font-weight: 800; color: #4285f4; font-size: 15px;
+  font-family: Arial, sans-serif; margin-right: 2px;
+}
+
+.auth-links { display: flex; justify-content: center; gap: 18px; margin-top: 18px; flex-wrap: wrap; }
+.linkish {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-size: 13px; font-weight: 600; color: var(--accent-dark); font-family: inherit;
+}
+.linkish:hover { text-decoration: underline; }
+.linkish.subtle { color: var(--muted); font-weight: 500; font-size: 12.5px; }
+.auth-guest { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+
+/* ---------- Sidebar account box ---------- */
+.account-box { margin-bottom: 10px; }
+.acct-row { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; }
+.acct-avatar {
+  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+  background: var(--accent); color: #fff; font-weight: 700; font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+}
+.acct-meta { min-width: 0; }
+.acct-name {
+  color: #fff; font-size: 12.5px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.acct-email {
+  font-size: 11px; opacity: 0.6;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.acct-signout, .acct-signin {
+  width: 100%; background: rgba(255, 255, 255, 0.08); border: none; color: var(--sidebar-text);
+  font-size: 12px; font-weight: 600; padding: 7px; border-radius: 7px;
+  cursor: pointer; font-family: inherit;
+}
+.acct-signout:hover, .acct-signin:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
+.acct-signin { background: var(--accent); color: #fff; }
+.acct-signin:hover { background: var(--accent-dark); color: #fff; }
+
 /* ---------- Sidebar ---------- */
 .sidebar {
   width: 240px;
@@ -72,6 +154,30 @@ body {
 
 .sidebar-footer { margin-top: auto; padding: 16px; }
 .hint { font-size: 11.5px; opacity: 0.55; line-height: 1.5; }
+
+/* ---------- Cloud sync ---------- */
+.cloud-status {
+  font-size: 12px; font-weight: 600; padding: 7px 10px; margin-bottom: 8px;
+  border-radius: 7px; background: rgba(255, 255, 255, 0.07); color: var(--sidebar-text);
+}
+.cloud-status.status-live { background: rgba(29, 158, 111, 0.18); color: #6fe0b4; }
+.cloud-status.status-error { background: rgba(210, 68, 68, 0.18); color: #ff9c9c; }
+.cloud-status.status-connecting, .cloud-status.status-signed-out { color: #ffd48a; background: rgba(181, 122, 8, 0.18); }
+
+.cloud-status-line { font-size: 13.5px; display: flex; align-items: center; gap: 8px; }
+.cloud-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+.cloud-dot.on { background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+.cloud-dot.warn { background: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft); }
+.cloud-dot.off { background: var(--muted); }
+.cloud-error {
+  margin-top: 10px; font-size: 12.5px; line-height: 1.5;
+  background: var(--red-soft); color: var(--red); padding: 9px 12px; border-radius: 8px;
+}
+.ok-chip {
+  font-size: 11px; font-weight: 700; color: var(--green);
+  background: var(--green-soft); padding: 2px 8px; border-radius: 20px; margin-left: 6px;
+}
+#firebaseCfg { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 
 /* ---------- Main ---------- */
 .main { flex: 1; padding: 28px 34px 60px; max-width: 1200px; min-width: 0; }

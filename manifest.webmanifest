@@ -1,0 +1,16 @@
+{
+  "name": "DJ ClientFlow — Client & Invoice Manager",
+  "short_name": "ClientFlow",
+  "description": "Manage DJ clients, gigs, invoices and payments in one place.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f6f5fa",
+  "theme_color": "#16122b",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

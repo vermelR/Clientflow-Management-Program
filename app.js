@@ -8,14 +8,35 @@
 (() => {
   "use strict";
 
-  const STORAGE_KEY = "djclientflow.v1";
+  const BASE_KEY = "djclientflow.v1";
   const GMAIL_TOKEN_KEY = "djclientflow.gmailToken";
+  const GUEST_KEY = "djclientflow.guestMode";
+
+  // Each signed-in account caches into its own slot, so two DJs sharing
+  // a laptop never see each other's clients. Guests use the base key.
+  let activeUid = null;
+  function storageKey() {
+    return activeUid ? `${BASE_KEY}.${activeUid}` : BASE_KEY;
+  }
 
   /* ---------------- State ---------------- */
 
-  const DEFAULT_HOTEL_TEXT = "Client to provide 1 room with 2 beds for night of events as well as one day before and after at the performance venue. If venue does not have a hotel onsite, accommodations must be made within 3 miles of the venue and approved by RND Entertainment. For any contracts containing larger setups, additional rooms may be required for additional production team members. If parking is not available onsite for oversized vehicles, reimbursements are required.";
+  const RND_HOTEL_TEXT = "Client to provide 1 room with 2 beds for night of events as well as one day before and after at the performance venue. If venue does not have a hotel onsite, accommodations must be made within 3 miles of the venue and approved by RND Entertainment. For any contracts containing larger setups, additional rooms may be required for additional production team members. If parking is not available onsite for oversized vehicles, reimbursements are required.";
 
-  const defaultSettings = () => ({
+  const GENERIC_HOTEL_TEXT = "Client to provide 1 room with 2 beds for the night of the event, as well as one day before and after, at the performance venue. If the venue does not have a hotel onsite, accommodations must be made within 3 miles of the venue and approved in advance. For contracts containing larger setups, additional rooms may be required for additional production team members. If parking is not available onsite for oversized vehicles, reimbursement is required.";
+
+  // When the app is hosted for multiple DJs, every new account starts
+  // blank — nobody should inherit another business's details.
+  const defaultSettings = () => (accountsMode() ? {
+    businessName: "My DJ Business",
+    ownerName: "",
+    email: "",
+    phone: "",
+    address: "",
+    logoText: "",
+    logoImg: "",
+    ...sharedDefaults(GENERIC_HOTEL_TEXT),
+  } : {
     businessName: "RND Entertainment",
     ownerName: "",
     email: "officialdjrnd@gmail.com",
@@ -23,15 +44,22 @@
     address: "1120 Staghorn Dr., North Brunswick, NJ 08902",
     logoText: "RND",
     logoImg: "",
-    currency: "USD",
-    taxRate: 0,
-    invoicePrefix: "INV-",
-    nextInvoiceNumber: 1,
-    paymentInstructions: "Payment accepted via Venmo, Zelle, or check. Thank you for your business!",
-    defaultDueDays: 14,
-    hotelText: DEFAULT_HOTEL_TEXT,
-    googleClientId: "",
+    ...sharedDefaults(RND_HOTEL_TEXT),
   });
+
+  function sharedDefaults(hotelText) {
+    return {
+      currency: "USD",
+      taxRate: 0,
+      invoicePrefix: "INV-",
+      nextInvoiceNumber: 1,
+      paymentInstructions: "Payment accepted via Venmo, Zelle, or check. Thank you for your business!",
+      defaultDueDays: 14,
+      hotelText,
+      googleClientId: "",
+      firebaseConfig: null,
+    };
+  }
 
   // Convert flat legacy invoices ({items, discount}) to the RND
   // grouped model ({groups, discounts, hotel clause}).
@@ -83,7 +111,7 @@
   }
 
   function load() {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey());
     if (!raw) return emptyState();
 
     let parsed;
@@ -93,7 +121,7 @@
       // Never silently discard saved work: stash the unreadable copy
       // under its own key so it can still be recovered by hand.
       console.error("Saved data could not be parsed", e);
-      try { localStorage.setItem(STORAGE_KEY + ".corrupt", raw); } catch { /* quota */ }
+      try { localStorage.setItem(storageKey() + ".corrupt", raw); } catch { /* quota */ }
       return emptyState();
     }
 
@@ -113,7 +141,12 @@
   }
 
   function save() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    saveLocal();
+    queueCloudPush();
+  }
+
+  function saveLocal() {
+    localStorage.setItem(storageKey(), JSON.stringify(state));
     document.getElementById("sidebarBizName").textContent = state.settings.businessName || "DJ ClientFlow";
   }
 
@@ -1677,6 +1710,8 @@
         </form>
       </div>
 
+      <div class="card card-pad" style="max-width:720px;margin-top:20px" id="cloudCard"></div>
+
       <div class="card card-pad" style="max-width:720px;margin-top:20px">
         <div class="card-title">📨 Gmail — send invoices from the site</div>
         <p class="settings-note">
@@ -1701,8 +1736,8 @@
 
       <div class="card card-pad" style="max-width:720px;margin-top:20px">
         <div class="card-title">Data backup</div>
-        <p class="settings-note">
-          Your data lives in this browser only. Export a backup file regularly, and import it to restore or move to another device.
+        <p class="settings-note" id="backupNote">
+          Export a backup file any time — handy before big changes, or to move data between accounts.
         </p>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <button class="btn" id="exportData">⬇ Export backup (JSON)</button>
@@ -1711,6 +1746,8 @@
           <button class="btn btn-danger" id="clearData">Erase all data</button>
         </div>
       </div>`;
+
+    renderCloudCard();
 
     $("#settingsForm", root).addEventListener("submit", e => {
       e.preventDefault();
@@ -1794,10 +1831,98 @@
     });
 
     $("#clearData", root).addEventListener("click", () => {
-      if (!confirm("This permanently erases ALL clients, gigs and invoices in this browser. Are you sure?")) return;
+      const scope = cloud.user
+        ? "This permanently erases ALL clients, gigs and invoices in your account, on every device."
+        : "This permanently erases ALL clients, gigs and invoices in this browser.";
+      if (!confirm(scope + " Are you sure?")) return;
       if (!confirm("Last chance — really erase everything?")) return;
-      state = { settings: defaultSettings(), clients: [], events: [], invoices: [] };
+      state = emptyState();
       save(); render(); toast("All data erased");
+    });
+  }
+
+  function renderCloudCard() {
+    const card = document.getElementById("cloudCard");
+    if (!card) return;
+    const cfg = state.settings.firebaseConfig;
+    const configured = firebaseConfigured();
+    const signedIn = !!cloud.user;
+    const hosted = accountsMode();
+    const lastSync = cloud.lastSyncedAt
+      ? new Date(cloud.lastSyncedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+      : null;
+
+    const statusLine = !configured
+      ? `<span class="cloud-dot off"></span> Not set up — your data lives only in this browser`
+      : signedIn
+        ? `<span class="cloud-dot ${cloud.status === "live" ? "on" : "warn"}"></span> Signed in as <strong>${escapeHtml(cloud.user.email || "your account")}</strong>${lastSync ? ` · last synced ${lastSync}` : ""}`
+        : cloud.status === "connecting"
+          ? `<span class="cloud-dot warn"></span> Connecting…`
+          : `<span class="cloud-dot warn"></span> Signed out — sign in to sync this device`;
+
+    // In hosted mode the keys belong to the site owner, so end users
+    // only ever see their account status.
+    card.innerHTML = `
+      <div class="card-title">☁️ Your account &amp; sync</div>
+      <p class="settings-note">
+        ${hosted
+          ? `Your clients, gigs and invoices are stored in your own private account. Sign in on any laptop or phone and everything is there — changes sync between devices automatically, and the app keeps working offline.`
+          : `Sign in with Google to store your data in your own Firebase project and reach it from any device. Setup takes about 15 minutes; the <a href="https://github.com/vermelR/Clientflow-Management-Program#cloud-sync-and-multi-user-setup" target="_blank" rel="noopener">README walks you through it</a>.`}
+      </p>
+
+      <div class="cloud-status-line">${statusLine}</div>
+      ${cloud.error ? `<div class="cloud-error">⚠️ ${escapeHtml(cloud.error)}</div>` : ""}
+
+      ${hosted ? "" : `
+        <div class="field full" style="margin-top:14px">
+          <label>Firebase config ${configured ? `<span class="ok-chip">✓ saved</span>` : ""}</label>
+          <textarea id="firebaseCfg" rows="6" class="field-textarea" placeholder='Paste the whole block from the Firebase console, e.g.
+
+const firebaseConfig = {
+  apiKey: "AIza…",
+  authDomain: "my-dj-app.firebaseapp.com",
+  projectId: "my-dj-app",
+  appId: "1:123…:web:abc…"
+};'>${cfg ? escapeHtml(JSON.stringify(cfg, null, 2)) : ""}</textarea>
+        </div>`}
+
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+        ${hosted ? "" : `<button class="btn" id="saveFirebaseCfg">Save config</button>`}
+        ${configured && !signedIn ? `<button class="btn btn-primary" id="cloudSignIn">Sign in${hosted ? "" : " with Google"}</button>` : ""}
+        ${signedIn ? `<button class="btn" id="cloudSyncNow">Sync now</button>` : ""}
+        ${signedIn ? `<button class="btn" id="cloudSignOut">Sign out</button>` : ""}
+      </div>`;
+
+    if (hosted && configured && !signedIn) {
+      $("#cloudSignIn", card)?.addEventListener("click", () => {
+        localStorage.removeItem(GUEST_KEY);
+        authMode = "signin";
+        showAuthScreen();
+      });
+    }
+
+    $("#saveFirebaseCfg", card)?.addEventListener("click", () => {
+      const text = $("#firebaseCfg", card).value.trim();
+      if (!text) {
+        state.settings.firebaseConfig = null;
+        save(); setCloudStatus("off"); toast("Cloud config cleared");
+        return;
+      }
+      const parsed = parseFirebaseConfig(text);
+      if (!parsed) {
+        toast("Couldn't read that — paste the whole firebaseConfig block");
+        return;
+      }
+      state.settings.firebaseConfig = parsed;
+      save();
+      toast("Config saved — now sign in with Google");
+      initCloud();
+    });
+    $("#cloudSignIn", card)?.addEventListener("click", cloudSignIn);
+    $("#cloudSignOut", card)?.addEventListener("click", cloudSignOut);
+    $("#cloudSyncNow", card)?.addEventListener("click", async () => {
+      await pushCloud();
+      toast("Synced ☁️");
     });
   }
 
@@ -1881,8 +2006,575 @@
     toast("Sample data loaded — explore away! 🎉");
   }
 
+  /* ================= CLOUD SYNC (Firebase) =================
+     One document per signed-in user holds the whole database.
+     Firestore's realtime listener keeps every device in step and
+     its offline cache means the app keeps working with no signal. */
+
+  const FIREBASE_VERSION = "10.12.5";
+  const DEVICE_KEY = "djclientflow.deviceId";
+  const LINKED_KEY = "djclientflow.linkedUid";
+  const PRELINK_BACKUP_KEY = BASE_KEY + ".prelink-backup";
+  const CLOUD_DOC_LIMIT = 900000; // Firestore caps a document at 1 MB.
+
+  let deviceId = localStorage.getItem(DEVICE_KEY);
+  if (!deviceId) { deviceId = uid(); localStorage.setItem(DEVICE_KEY, deviceId); }
+
+  const cloud = {
+    status: "off", // off | connecting | signed-out | live | error
+    user: null, error: "", lastSyncedAt: null,
+    auth: null, db: null, docRef: null, unsub: null,
+    fs: null, authMod: null, applyingRemote: false, pushTimer: null, booted: false,
+  };
+
+  // Settings that stay on this device: the Firebase keys are needed
+  // *before* sync can start, so they must never arrive from the cloud.
+  const LOCAL_ONLY_SETTINGS = ["firebaseConfig"];
+
+  // A config baked into firebase-config.js turns the app into a
+  // multi-user product: everyone signs into their own account.
+  function hostedConfig() {
+    const c = window.DJCF_FIREBASE_CONFIG;
+    if (!c || !c.apiKey || String(c.apiKey).startsWith("YOUR_")) return null;
+    return c;
+  }
+  function accountsMode() { return !!hostedConfig(); }
+  function activeConfig() { return hostedConfig() || state.settings.firebaseConfig || null; }
+
+  function firebaseConfigured() {
+    const c = activeConfig();
+    return !!(c && c.apiKey && c.projectId && c.appId);
+  }
+
+  const appInfo = () => ({
+    productName: "DJ ClientFlow",
+    tagline: "Clients, gigs and invoices — all in one place.",
+    ...(window.DJCF_APP_INFO || {}),
+  });
+
+  // Accepts the config block copied straight out of the Firebase console.
+  function parseFirebaseConfig(text) {
+    const out = {};
+    ["apiKey", "authDomain", "projectId", "storageBucket", "messagingSenderId", "appId"].forEach(k => {
+      const m = String(text).match(new RegExp(k + "\\s*[:=]\\s*[\"'`]([^\"'`]+)[\"'`]"));
+      if (m) out[k] = m[1];
+    });
+    return out.apiKey && out.projectId && out.appId ? out : null;
+  }
+
+  function setCloudStatus(status, error = "") {
+    cloud.status = status;
+    cloud.error = error;
+    refreshCloudUi();
+  }
+
+  function cloudLabel() {
+    switch (cloud.status) {
+      case "live": return navigator.onLine ? "☁️ Synced" : "☁️ Offline — will sync";
+      case "connecting": return "☁️ Connecting…";
+      case "signed-out": return "☁️ Sign in to sync";
+      case "error": return "⚠️ Sync problem";
+      default: return "💾 This device only";
+    }
+  }
+
+  function refreshCloudUi() {
+    const el = document.getElementById("cloudStatus");
+    if (el) {
+      el.textContent = cloudLabel();
+      el.className = "cloud-status status-" + cloud.status;
+      el.title = cloud.user ? `Signed in as ${cloud.user.email}` : "";
+    }
+
+    const box = document.getElementById("accountBox");
+    if (box) {
+      if (cloud.user) {
+        const name = cloud.user.displayName || cloud.user.email || "Your account";
+        const initial = (name[0] || "?").toUpperCase();
+        box.classList.remove("hidden");
+        box.innerHTML = `
+          <div class="acct-row">
+            <div class="acct-avatar">${escapeHtml(initial)}</div>
+            <div class="acct-meta">
+              <div class="acct-name">${escapeHtml(name)}</div>
+              <div class="acct-email">${escapeHtml(cloud.user.email || "")}</div>
+            </div>
+          </div>
+          <button class="acct-signout" id="sidebarSignOut">Sign out</button>`;
+        $("#sidebarSignOut", box).addEventListener("click", cloudSignOut);
+      } else if (accountsMode() && isGuest()) {
+        box.classList.remove("hidden");
+        box.innerHTML = `<button class="acct-signin" id="sidebarSignIn">Sign in to sync →</button>`;
+        $("#sidebarSignIn", box).addEventListener("click", () => {
+          localStorage.removeItem(GUEST_KEY);
+          authMode = "signin";
+          showAuthScreen();
+        });
+      } else {
+        box.classList.add("hidden");
+        box.innerHTML = "";
+      }
+    }
+
+    const hint = document.getElementById("sidebarHint");
+    if (hint) {
+      hint.textContent = cloud.user
+        ? "Your data is saved to your account and synced to every device."
+        : accountsMode()
+          ? "Guest mode — data stays in this browser until you sign in."
+          : "Turn on cloud sync in Settings to reach your data from any device.";
+    }
+
+    if (currentView === "settings") renderCloudCard();
+  }
+
+  async function initCloud() {
+    if (!firebaseConfigured()) {
+      setCloudStatus("off");
+      showApp();
+      return;
+    }
+    setCloudStatus("connecting");
+    if (accountsMode() && !isGuest()) showAuthScreen({ loading: true });
+    try {
+      const [appMod, authMod, fsMod] = await Promise.all([
+        import(`https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/firebase-app.js`),
+        import(`https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/firebase-auth.js`),
+        import(`https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/firebase-firestore.js`),
+      ]);
+      cloud.fs = fsMod;
+      cloud.authMod = authMod;
+      const app = appMod.initializeApp(activeConfig());
+      cloud.auth = authMod.getAuth(app);
+      // Offline cache: the app still works with no connection and
+      // queues writes until it is back.
+      try {
+        cloud.db = fsMod.initializeFirestore(app, { localCache: fsMod.persistentLocalCache({}) });
+      } catch {
+        cloud.db = fsMod.getFirestore(app);
+      }
+      authMod.onAuthStateChanged(cloud.auth, user => {
+        cloud.booted = true;
+        if (user) onSignedIn(user);
+        else onSignedOut();
+      });
+    } catch (e) {
+      console.error("Cloud sync failed to start", e);
+      cloud.booted = true;
+      setCloudStatus("error", navigator.onLine
+        ? "Could not reach the sign-in service. Check the Firebase config."
+        : "You're offline — showing the data saved on this device.");
+      // Never strand someone behind a login screen that cannot load:
+      // fall back to whatever this device already has.
+      showApp();
+    }
+  }
+
+  function onSignedIn(user) {
+    cloud.user = user;
+    const previousKey = storageKey();
+    activeUid = user.uid;
+    // Load (or start) this account's own local cache before syncing.
+    state = load();
+    saveLocal();
+    guestDataPendingImport = localStorage.getItem(GUEST_KEY) === "1" ? previousKey : null;
+    localStorage.removeItem(GUEST_KEY);
+    showApp();
+    go("dashboard");
+    startSync(user);
+  }
+
+  function onSignedOut() {
+    cloud.user = null;
+    stopSync();
+    activeUid = null;
+    setCloudStatus(accountsMode() ? "signed-out" : "off");
+    if (accountsMode() && !isGuest()) {
+      state = emptyState();   // nothing of the last account stays on screen
+      authMode = "signin";
+      authValues = { name: "", email: "" };
+      showAuthScreen();
+    } else {
+      state = load();
+      showApp();
+      render();
+    }
+  }
+
+  function isGuest() { return localStorage.getItem(GUEST_KEY) === "1"; }
+
+  function continueAsGuest() {
+    localStorage.setItem(GUEST_KEY, "1");
+    activeUid = null;
+    state = load();
+    showApp();
+    render();
+    refreshCloudUi();
+    toast("Using this device only — create an account any time to sync");
+  }
+
+  async function cloudSignOut() {
+    if (!confirm("Sign out? Your data stays safe in your account.")) return;
+    localStorage.removeItem(LINKED_KEY);
+    localStorage.removeItem(GUEST_KEY);
+    try { await cloud.authMod.signOut(cloud.auth); } catch (e) { console.warn(e); }
+    if (!accountsMode()) { activeUid = null; state = load(); render(); }
+    toast("Signed out");
+  }
+
+  function authErrorMessage(e) {
+    const map = {
+      "auth/invalid-email": "That email address doesn't look right.",
+      "auth/missing-password": "Enter your password.",
+      "auth/weak-password": "Password needs to be at least 6 characters.",
+      "auth/email-already-in-use": "That email already has an account — try signing in instead.",
+      "auth/invalid-credential": "Email or password is incorrect.",
+      "auth/wrong-password": "Email or password is incorrect.",
+      "auth/user-not-found": "No account with that email yet — create one below.",
+      "auth/too-many-requests": "Too many attempts. Wait a minute and try again.",
+      "auth/popup-closed-by-user": "Sign-in window closed.",
+      "auth/popup-blocked": "Your browser blocked the popup — allow popups and retry.",
+      "auth/unauthorized-domain": "This site's domain isn't authorized in Firebase → Authentication → Settings → Authorized domains.",
+      "auth/operation-not-allowed": "That sign-in method isn't enabled in your Firebase project yet.",
+      "auth/network-request-failed": "Network problem — check your connection.",
+    };
+    return map[e?.code] || e?.message || "Something went wrong. Please try again.";
+  }
+
+  /* ---------------- Login screen ---------------- */
+
+  let authMode = "signin"; // signin | signup | reset
+  let guestDataPendingImport = null;
+  // Kept across re-renders so a wrong password never costs someone
+  // the name and email they already typed.
+  let authValues = { name: "", email: "" };
+
+  function showApp() {
+    const screen = $("#authScreen");
+    screen.classList.add("hidden");
+    screen.innerHTML = "";        // don't leave a stale login form in the DOM
+    authValues = { name: "", email: "" };
+    $("#appShell").classList.remove("hidden");
+  }
+
+  function showAuthScreen(opts = {}) {
+    $("#appShell").classList.add("hidden");
+    const screen = $("#authScreen");
+    screen.classList.remove("hidden");
+    renderAuthScreen(opts);
+  }
+
+  function renderAuthScreen({ loading = false, busy = false, error = "", notice = "" } = {}) {
+    const info = appInfo();
+    const screen = $("#authScreen");
+
+    if (loading) {
+      screen.innerHTML = `
+        <div class="auth-card">
+          <div class="auth-logo">🎧</div>
+          <div class="auth-brand">${escapeHtml(info.productName)}</div>
+          <div class="auth-loading">Loading…</div>
+        </div>`;
+      return;
+    }
+
+    const isSignup = authMode === "signup";
+    const isReset = authMode === "reset";
+    const title = isSignup ? "Create your account" : isReset ? "Reset your password" : "Welcome back";
+    const cta = isSignup ? "Create account" : isReset ? "Send reset link" : "Sign in";
+
+    screen.innerHTML = `
+      <div class="auth-card">
+        <div class="auth-logo">🎧</div>
+        <div class="auth-brand">${escapeHtml(info.productName)}</div>
+        <div class="auth-tagline">${escapeHtml(info.tagline)}</div>
+
+        <div class="auth-title">${title}</div>
+        ${error ? `<div class="auth-error">${escapeHtml(error)}</div>` : ""}
+        ${notice ? `<div class="auth-notice">${escapeHtml(notice)}</div>` : ""}
+
+        <form id="authForm" novalidate>
+          ${isSignup ? `
+            <div class="field"><label>Your name</label>
+              <input name="name" autocomplete="name" placeholder="DJ RND" value="${escapeHtml(authValues.name)}">
+            </div>` : ""}
+          <div class="field"><label>Email</label>
+            <input name="email" type="email" autocomplete="email" required placeholder="you@email.com" value="${escapeHtml(authValues.email)}">
+          </div>
+          ${!isReset ? `
+            <div class="field"><label>Password</label>
+              <input name="password" type="password" required
+                     autocomplete="${isSignup ? "new-password" : "current-password"}"
+                     placeholder="${isSignup ? "At least 6 characters" : "Your password"}">
+            </div>` : ""}
+          <button type="submit" class="btn btn-primary auth-submit" ${busy ? "disabled" : ""}>
+            ${busy ? "Working…" : cta}
+          </button>
+        </form>
+
+        ${!isReset ? `
+          <div class="auth-divider"><span>or</span></div>
+          <button class="btn auth-google" id="authGoogle" ${busy ? "disabled" : ""}>
+            <span class="g-mark">G</span> Continue with Google
+          </button>` : ""}
+
+        <div class="auth-links">
+          ${authMode === "signin" ? `
+            <button class="linkish" data-mode="signup">Create an account</button>
+            <button class="linkish" data-mode="reset">Forgot password?</button>` : ""}
+          ${authMode === "signup" ? `<button class="linkish" data-mode="signin">I already have an account</button>` : ""}
+          ${authMode === "reset" ? `<button class="linkish" data-mode="signin">Back to sign in</button>` : ""}
+        </div>
+
+        <div class="auth-guest">
+          <button class="linkish subtle" id="authGuest">Skip — just use this device</button>
+        </div>
+      </div>`;
+
+    // Carry typed values through mode switches too.
+    const form = $("#authForm", screen);
+    form.addEventListener("input", () => {
+      authValues.name = form.name?.value ?? authValues.name;
+      authValues.email = form.email?.value ?? authValues.email;
+    });
+
+    $$("[data-mode]", screen).forEach(b => b.addEventListener("click", () => {
+      authMode = b.dataset.mode;
+      renderAuthScreen();
+    }));
+    $("#authGuest", screen).addEventListener("click", continueAsGuest);
+    $("#authGoogle", screen)?.addEventListener("click", googleSignIn);
+    $("#authForm", screen).addEventListener("submit", submitAuthForm);
+  }
+
+  async function submitAuthForm(e) {
+    e.preventDefault();
+    const fd = Object.fromEntries(new FormData(e.target).entries());
+    const email = (fd.email || "").trim();
+    const password = fd.password || "";
+    authValues = { name: fd.name || "", email };
+    const {
+      createUserWithEmailAndPassword, signInWithEmailAndPassword,
+      sendPasswordResetEmail, updateProfile,
+    } = cloud.authMod;
+
+    renderAuthScreen({ busy: true });
+    try {
+      if (authMode === "reset") {
+        await sendPasswordResetEmail(cloud.auth, email);
+        authMode = "signin";
+        renderAuthScreen({ notice: `Password reset link sent to ${email}. Check your inbox.` });
+        return;
+      }
+      if (authMode === "signup") {
+        const cred = await createUserWithEmailAndPassword(cloud.auth, email, password);
+        if (fd.name) {
+          try { await updateProfile(cred.user, { displayName: fd.name }); } catch { /* non-fatal */ }
+          pendingOwnerName = fd.name;
+        }
+      } else {
+        await signInWithEmailAndPassword(cloud.auth, email, password);
+      }
+      // onAuthStateChanged takes it from here.
+    } catch (err) {
+      console.warn(err);
+      renderAuthScreen({ error: authErrorMessage(err) });
+    }
+  }
+
+  let pendingOwnerName = "";
+
+  async function googleSignIn() {
+    renderAuthScreen({ busy: true });
+    try {
+      const provider = new cloud.authMod.GoogleAuthProvider();
+      await cloud.authMod.signInWithPopup(cloud.auth, provider);
+    } catch (err) {
+      console.warn(err);
+      renderAuthScreen({ error: authErrorMessage(err) });
+    }
+  }
+
+  // Legacy/self-host path: sign in from Settings without the full gate.
+  async function cloudSignIn() {
+    if (!firebaseConfigured()) { toast("Add your Firebase config first"); return; }
+    if (!cloud.auth) await initCloud();
+    if (!cloud.auth) return;
+    try {
+      await cloud.authMod.signInWithPopup(cloud.auth, new cloud.authMod.GoogleAuthProvider());
+      toast("Signed in — your data now syncs ☁️");
+    } catch (e) {
+      console.warn(e);
+      setCloudStatus("signed-out", authErrorMessage(e));
+      toast(authErrorMessage(e));
+    }
+  }
+
+  function stopSync() {
+    if (cloud.unsub) { cloud.unsub(); cloud.unsub = null; }
+    cloud.docRef = null;
+  }
+
+  function startSync(user) {
+    const { doc, onSnapshot } = cloud.fs;
+    stopSync();
+    cloud.docRef = doc(cloud.db, "djclientflow", user.uid);
+    let first = true;
+    setCloudStatus("connecting");
+
+    cloud.unsub = onSnapshot(cloud.docRef, { includeMetadataChanges: true }, snap => {
+      // Skip the echo of our own not-yet-acknowledged write.
+      if (snap.metadata.hasPendingWrites) return;
+      const data = snap.exists() ? snap.data() : null;
+
+      if (first) {
+        first = false;
+        reconcileFirstSync(user, data);
+        setCloudStatus("live");
+        return;
+      }
+      if (!data) return;
+      cloud.lastSyncedAt = Date.now();
+      if (data.deviceId === deviceId) { setCloudStatus("live"); return; }
+      applyRemote(data);
+      toast("Updated from another device ☁️");
+      setCloudStatus("live");
+    }, err => {
+      console.error("Sync listener failed", err);
+      setCloudStatus("error", err?.code === "permission-denied"
+        ? "Firestore rules are blocking access — see the README setup step."
+        : "Lost connection to the cloud; local saving still works.");
+    });
+  }
+
+  // First snapshot after signing in on a device decides who wins.
+  function reconcileFirstSync(user, remote) {
+    const hasData = s => s && (s.clients.length || s.events.length || s.invoices.length);
+    const alreadyLinked = localStorage.getItem(LINKED_KEY) === user.uid;
+
+    if (remote && (!hasData(state) || alreadyLinked)) {
+      applyRemote(remote);                   // the account's cloud copy is truth
+    } else if (remote) {
+      // This device had its own records: keep both, never drop anything.
+      try { localStorage.setItem(PRELINK_BACKUP_KEY, JSON.stringify(state)); } catch { /* quota */ }
+      const added = mergeRemoteIntoLocal(remote);
+      pushCloud(true);
+      toast(added
+        ? `Merged with your account — ${added} record${added === 1 ? "" : "s"} added ☁️`
+        : "Merged with your account ☁️");
+    } else {
+      // Brand new account: personalize it, and offer to carry over
+      // anything created before signing up.
+      if (pendingOwnerName && !state.settings.ownerName) state.settings.ownerName = pendingOwnerName;
+      if (user.email && !state.settings.email) state.settings.email = user.email;
+      pendingOwnerName = "";
+      offerGuestImport();
+      pushCloud(true);
+      toast("Account ready — your data now syncs ☁️");
+    }
+    localStorage.setItem(LINKED_KEY, user.uid);
+    cloud.lastSyncedAt = Date.now();
+  }
+
+  // Someone who tried the app as a guest and then signed up keeps their work.
+  function offerGuestImport() {
+    if (!guestDataPendingImport) return;
+    const raw = localStorage.getItem(guestDataPendingImport);
+    guestDataPendingImport = null;
+    if (!raw) return;
+    let guestState;
+    try { guestState = JSON.parse(raw); } catch { return; }
+    const count = (guestState.clients || []).length + (guestState.events || []).length + (guestState.invoices || []).length;
+    if (!count) return;
+    if (!confirm(`Bring the ${count} record${count === 1 ? "" : "s"} you created before signing up into this account?`)) return;
+    state.clients = guestState.clients || [];
+    state.events = guestState.events || [];
+    state.invoices = (guestState.invoices || []).map(migrateInvoice);
+    const keptLocal = {};
+    LOCAL_ONLY_SETTINGS.forEach(k => { keptLocal[k] = state.settings[k]; });
+    state.settings = { ...state.settings, ...(guestState.settings || {}), ...keptLocal };
+    saveLocal();
+    render();
+  }
+
+  function remoteToState(data) {
+    const keptLocal = {};
+    LOCAL_ONLY_SETTINGS.forEach(k => { keptLocal[k] = state.settings[k]; });
+    return {
+      settings: { ...defaultSettings(), ...(data.settings || {}), ...keptLocal },
+      clients: data.clients || [],
+      events: data.events || [],
+      invoices: (data.invoices || []).map(migrateInvoice),
+    };
+  }
+
+  function applyRemote(data) {
+    cloud.applyingRemote = true;
+    try {
+      state = remoteToState(data);
+      saveLocal();
+      render();
+    } finally {
+      cloud.applyingRemote = false;
+    }
+    cloud.lastSyncedAt = Date.now();
+  }
+
+  // Union by id — the cloud copy wins a tie, local-only records are kept.
+  function mergeRemoteIntoLocal(data) {
+    const remote = remoteToState(data);
+    let added = 0;
+    ["clients", "events", "invoices"].forEach(key => {
+      const merged = new Map((remote[key] || []).map(r => [r.id, r]));
+      (state[key] || []).forEach(localRec => {
+        if (!merged.has(localRec.id)) { merged.set(localRec.id, localRec); added++; }
+      });
+      remote[key] = [...merged.values()];
+    });
+    state = remote;
+    saveLocal();
+    render();
+    return added;
+  }
+
+  function queueCloudPush() {
+    if (cloud.status !== "live" || cloud.applyingRemote || !cloud.docRef) return;
+    clearTimeout(cloud.pushTimer);
+    cloud.pushTimer = setTimeout(() => pushCloud(), 900);
+  }
+
+  async function pushCloud(silent = false) {
+    if (!cloud.docRef || !cloud.fs) return;
+    const settings = { ...state.settings };
+    LOCAL_ONLY_SETTINGS.forEach(k => delete settings[k]);
+    const payload = {
+      settings, clients: state.clients, events: state.events, invoices: state.invoices,
+      deviceId, updatedAt: cloud.fs.serverTimestamp(), schema: 2,
+    };
+    if (JSON.stringify(payload).length > CLOUD_DOC_LIMIT) {
+      setCloudStatus("error", "Your data is too large to sync — a big logo image is the usual cause.");
+      if (!silent) toast("Too large to sync — try a smaller logo image");
+      return;
+    }
+    try {
+      await cloud.fs.setDoc(cloud.docRef, payload);
+      cloud.lastSyncedAt = Date.now();
+      setCloudStatus("live");
+    } catch (e) {
+      console.error("Cloud push failed", e);
+      // Firestore retries queued writes itself once back online.
+      setCloudStatus(navigator.onLine ? "error" : "live",
+        navigator.onLine ? (e?.message || "Could not save to the cloud") : "");
+    }
+  }
+
+  window.addEventListener("online", () => { if (cloud.status !== "off") refreshCloudUi(); });
+  window.addEventListener("offline", refreshCloudUi);
+
   /* ---------------- Init ---------------- */
 
-  save(); // syncs sidebar business name
+  saveLocal(); // syncs sidebar business name without a cloud round-trip
   render();
+  refreshCloudUi();
+  initCloud();
 })();

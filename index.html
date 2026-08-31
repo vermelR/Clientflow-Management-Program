@@ -4,10 +4,20 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DJ ClientFlow — Client & Invoice Manager</title>
+  <meta name="description" content="Manage DJ clients, gigs and invoices in one place.">
+  <meta name="theme-color" content="#16122b">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="DJ ClientFlow">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="app">
+  <!-- Login / sign-up screen (shown until someone signs in) -->
+  <div class="auth-screen hidden" id="authScreen"></div>
+
+  <div class="app hidden" id="appShell">
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-logo">🎧</div>
@@ -25,7 +35,9 @@
         <button class="nav-item" data-view="settings"><span class="nav-icon">⚙️</span> Settings</button>
       </nav>
       <div class="sidebar-footer">
-        <div class="hint">All data is saved automatically in this browser. Back it up anytime from Settings.</div>
+        <div class="account-box hidden" id="accountBox"></div>
+        <div class="cloud-status status-off" id="cloudStatus">💾 This device only</div>
+        <div class="hint" id="sidebarHint">Turn on cloud sync in Settings to reach your data from any device.</div>
       </div>
     </aside>
 
@@ -45,6 +57,17 @@
   <!-- Printable invoice (only visible when printing) -->
   <div id="printArea" class="print-area"></div>
 
+  <!-- Fill this in once to run the app for multiple users (see README) -->
+  <script src="firebase-config.js"></script>
   <script src="app.js"></script>
+  <script>
+    // Installable app + offline launch. Registration is relative so it
+    // works from a project sub-path like /Clientflow-Management-Program/.
+    if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("sw.js").catch(err => console.warn("SW registration failed", err));
+      });
+    }
+  </script>
 </body>
 </html>

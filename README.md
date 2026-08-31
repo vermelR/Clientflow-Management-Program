@@ -2,7 +2,11 @@
 
 A simple, HoneyBook-style client & invoice manager built for DJs. Track clients, manage gigs from inquiry to encore, create and send professional invoices, and see everything on a calendar — all in one organized place.
 
+Run it for yourself, or [host it for many DJs](#cloud-sync-and-multi-user-setup) with accounts, logins and cloud sync.
+
 ## ✨ Features
+
+- **Accounts & cloud sync** — sign in with email or Google and your data follows you to every device, with offline support ([setup](#cloud-sync-and-multi-user-setup))
 
 - **Dashboard** — upcoming gigs, money actually collected this year (deposits included), outstanding balances, and overdue alerts at a glance
 - **Clients** — contact info, how they found you, music preferences / do-not-play notes, plus each client's full gig & invoice history and lifetime revenue
@@ -45,11 +49,51 @@ Now every invoice has a **"Send via Gmail"** button that emails a beautifully fo
 
 > Note: Gmail sign-in requires the site to be served over http(s) — it works on your GitHub Pages URL, not when opening `index.html` directly from disk. The "Email (mail app)" button works everywhere as a fallback.
 
+## Cloud sync and multi-user setup
+
+Out of the box the app saves to the browser it's opened in. Add a free Firebase project and it becomes a real multi-user product: everyone gets a login, their own private data, and automatic sync across every device they use.
+
+**What you get once this is on**
+
+- A **login screen** with email + password, Google sign-in, and password reset
+- Every account's clients, gigs and invoices stored privately in the cloud — two DJs sharing a laptop never see each other's data
+- **Live sync**: add a gig on your phone, it's on your laptop seconds later
+- **Offline support**: keep working with no signal; changes upload when you reconnect
+- Nothing lost when a laptop dies — sign in on the new one and everything is there
+
+### One-time setup (~15 minutes)
+
+1. **Create a project** at [console.firebase.google.com](https://console.firebase.google.com) → *Add project*. The free Spark plan is plenty; no card required.
+2. **Add a Web app**: in *Project settings → General → Your apps*, click the `</>` icon. Copy the `firebaseConfig` block it shows you.
+3. **Paste it into `firebase-config.js`** in this repo (replacing the `YOUR_...` placeholders) and commit. These values are meant to be public — your data is protected by the security rules in step 6, not by hiding the keys.
+4. **Turn on sign-in methods**: *Authentication → Get started → Sign-in method*, enable **Email/Password** and **Google**.
+5. **Create the database**: *Firestore Database → Create database* → start in **production mode** → pick a region near you.
+6. **Publish the security rules** — this is the step that keeps each account's data private. Open *Firestore Database → Rules*, paste the contents of [`firestore.rules`](firestore.rules), and click **Publish**.
+7. **Authorize your domain**: *Authentication → Settings → Authorized domains* → add `vermelr.github.io` (and any custom domain). Without this, Google sign-in is blocked.
+
+Push the change and the live site now opens on a login screen. Anyone can create an account and start managing their own DJ business.
+
+> Leave `firebase-config.js` untouched and the app simply keeps working in single-user mode, saving to the browser — handy for testing locally.
+
+### Free tier, in plain terms
+
+Firestore's free allowance is 50,000 reads and 20,000 writes per day, plus 1 GB stored. This app stores each account as a single small document and only writes when something changes, so a busy DJ uses a tiny fraction of that. Hundreds of users would still fit comfortably.
+
+## 📱 Install it as an app
+
+The site is a PWA, so it installs like a native app and launches offline:
+
+- **iPhone/iPad**: open the site in Safari → Share → *Add to Home Screen*
+- **Android**: Chrome → menu → *Install app*
+- **Desktop** (Chrome/Edge): the install icon in the address bar
+
 ## 💾 Where's my data?
 
-Everything is saved automatically in your browser's local storage — private to your device, works offline. Use **Settings → Export backup** regularly to download a JSON backup, and **Import backup** to restore it or move to another computer.
+**With cloud sync on**, your data lives in your account — accessible from any device, safe if a laptop dies, and cached locally so the app works offline.
 
-> Note: clearing your browser data will erase the app's data too, so keep backups!
+**Without it**, everything is saved in the browser you're using. Use **Settings → Export backup** to download a JSON backup and **Import backup** to restore it elsewhere.
+
+> Either way, exporting an occasional backup is a good habit — and it's the easiest way to move data between accounts.
 
 ## 🛠 Tech
 
