@@ -225,11 +225,21 @@
   function groupSum(g) {
     return (g.items || []).reduce((s, it) => s + itemAmount(it), 0);
   }
+  // Hoisted declaration on purpose: load() runs migration before this
+  // point in the file, and that path calls invTotal → invSubtotal.
+  function isUploaded(inv) { return !!inv && inv.kind === "uploaded"; }
+
   function invSubtotal(inv) {
+    // An uploaded PDF has no line items — its total is typed in by hand.
+    if (isUploaded(inv)) return Number(inv.manualTotal) || 0;
     return (inv.groups || []).reduce((s, g) => s + groupSum(g), 0);
   }
-  function invTax(inv) { return invSubtotal(inv) * ((Number(inv.taxRate) || 0) / 100); }
+  function invTax(inv) {
+    if (isUploaded(inv)) return 0;
+    return invSubtotal(inv) * ((Number(inv.taxRate) || 0) / 100);
+  }
   function invDiscountTotal(inv) {
+    if (isUploaded(inv)) return 0;
     return (inv.discounts || []).reduce((s, d) => s + Math.abs(Number(d.amount) || 0), 0);
   }
   function invTotal(inv) { return invSubtotal(inv) + invTax(inv) - invDiscountTotal(inv); }
@@ -293,6 +303,7 @@
   function closeModal() {
     $("#modalOverlay").classList.add("hidden");
     $("#modal").innerHTML = "";
+    releaseObjectUrls();
   }
 
   $("#modalOverlay").addEventListener("click", e => {
@@ -794,6 +805,7 @@
           <div class="view-sub">${totalOwed > 0 ? `<strong>${money(totalOwed)}</strong> still owed across open invoices` : "Everything is paid up — nice work!"}</div>
         </div>
         <div class="header-actions">
+          <button class="btn" id="uploadInvoice">📎 Upload existing invoice</button>
           <button class="btn btn-primary" id="addInvoice">+ New invoice</button>
         </div>
       </div>
@@ -810,7 +822,7 @@
               const paid = invPaid(i), bal = invBalance(i);
               return `
               <tr class="clickable" data-open-invoice="${i.id}">
-                <td class="nowrap"><strong>${escapeHtml(i.number)}</strong></td>
+                <td class="nowrap"><strong>${escapeHtml(i.number)}</strong>${isUploaded(i) ? ` <span class="pdf-tag" title="Uploaded PDF">PDF</span>` : ""}</td>
                 <td>${escapeHtml(clientName(i.clientId))}${i.eventId && eventById(i.eventId) ? `<span class="sub">${escapeHtml(eventById(i.eventId).title)}</span>` : ""}</td>
                 <td class="nowrap">${fmtDate(i.issueDate)}</td>
                 <td class="nowrap">${fmtDate(i.dueDate)}</td>
@@ -823,18 +835,24 @@
             }).join("")}
           </tbody></table></div>`
         : `<div class="empty-state"><div class="big">📄</div><p>No invoices here yet.</p>
-           <button class="btn btn-primary" id="emptyAddInvoice">+ New invoice</button></div>`}
+           <button class="btn btn-primary" id="emptyAddInvoice">+ New invoice</button>
+           <button class="btn" id="emptyUploadInvoice">📎 Upload an existing one</button></div>`}
       </div>`;
 
     $("#addInvoice", root).addEventListener("click", () => openInvoiceForm());
+    $("#uploadInvoice", root).addEventListener("click", () => openUploadInvoiceForm());
     $("#emptyAddInvoice", root)?.addEventListener("click", () => openInvoiceForm());
+    $("#emptyUploadInvoice", root)?.addEventListener("click", () => openUploadInvoiceForm());
     $$("[data-filter]", root).forEach(ch => ch.addEventListener("click", () => {
       invoiceFilter = ch.dataset.filter;
       renderInvoices(root);
     }));
     $$("[data-edit-invoice]", root).forEach(b => b.addEventListener("click", e => {
       e.stopPropagation();
-      openInvoiceForm(b.dataset.editInvoice);
+      const inv = invoiceById(b.dataset.editInvoice);
+      // Uploaded PDFs have no line items to edit — only their details.
+      if (isUploaded(inv)) openUploadInvoiceForm(inv.id);
+      else openInvoiceForm(inv.id);
     }));
     bindRowOpeners(root);
   }
@@ -1095,8 +1113,182 @@
       }
       save(); closeModal(); render();
       toast(inv ? "Invoice updated" : `Invoice ${data.number} created`);
-      if (!inv) openInvoiceDetail(state.invoices[state.invoices.length - 1].id);
+      openInvoiceDetail(inv ? id : state.invoices[state.invoices.length - 1].id);
     });
+  }
+
+  /* ---------- Upload an existing invoice (PDF) ---------- */
+
+  function openUploadInvoiceForm(id) {
+    const inv = id ? invoiceById(id) : null;
+    if (!state.clients.length) {
+      toast("Add a client first — invoices are billed to clients");
+      openClientForm();
+      return;
+    }
+    const s = state.settings;
+    const issueDate = inv?.issueDate || todayISO();
+
+    openModal(modalShell(inv ? `Edit ${inv.number}` : "Upload an existing invoice", `
+      <form id="uploadInvForm">
+        <p class="settings-note">
+          ${inv
+            ? "Update the details, or swap in a new version of the file."
+            : "Already made this invoice somewhere else? Upload the PDF and track it here — payments, deposits and status all work the same, with no need to rebuild it."}
+        </p>
+
+        <div class="field full">
+          <label>Invoice PDF ${inv ? "(leave empty to keep the current file)" : "*"}</label>
+          <input type="file" name="file" accept="application/pdf,.pdf,image/*" ${inv ? "" : "required"}>
+          ${inv?.file ? `<div class="file-current">📎 ${escapeHtml(inv.file.name)} · ${fmtBytes(inv.file.size)}${inv.file.synced === false ? " · this device only" : ""}</div>` : ""}
+          <div class="file-hint">PDFs up to ${fmtBytes(SYNC_FILE_LIMIT)} sync to your other devices. Larger files (up to ${fmtBytes(MAX_FILE_SIZE)}) still upload, but stay on this device.</div>
+        </div>
+
+        <div class="form-grid">
+          <div class="field"><label>Invoice #</label>
+            <input name="number" value="${escapeHtml(inv?.number || s.invoicePrefix + String(s.nextInvoiceNumber).padStart(3, "0"))}">
+          </div>
+          <div class="field"><label>Client *</label><select name="clientId" required>${clientOptions(inv?.clientId)}</select></div>
+          <div class="field"><label>Linked gig (optional)</label>
+            <select name="eventId">
+              <option value="">— None —</option>
+              ${[...state.events].sort((a, b) => b.date.localeCompare(a.date)).map(e =>
+                `<option value="${e.id}" ${e.id === inv?.eventId ? "selected" : ""}>${escapeHtml(e.title)} (${fmtDate(e.date)})</option>`).join("")}
+            </select>
+          </div>
+          <div class="field"><label>Invoice total *</label>
+            <input name="manualTotal" type="number" step="0.01" min="0" required value="${escapeHtml(inv?.manualTotal ?? "")}" placeholder="0.00">
+          </div>
+          <div class="field"><label>Issue date</label><input name="issueDate" type="date" value="${escapeHtml(issueDate)}"></div>
+          <div class="field"><label>Due date</label>
+            <input name="dueDate" type="date" value="${escapeHtml(inv?.dueDate || addDaysISO(issueDate, s.defaultDueDays || 14))}">
+          </div>
+          <div class="field"><label>Status</label>
+            <select name="status">
+              ${["draft", "sent", "paid"].map(st => `<option value="${st}" ${(inv?.status || "sent") === st ? "selected" : ""}>${STATUS_LABEL[st]}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field full"><label>Notes</label>
+            <textarea name="notes" placeholder="Anything worth remembering about this invoice…">${escapeHtml(inv?.notes || "")}</textarea>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          ${inv ? `<button type="button" class="btn btn-danger" id="deleteUploadInv">Delete</button>` : ""}
+          <button type="button" class="btn" id="cancelModal">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="uploadSubmit">${inv ? "Save changes" : "Upload invoice"}</button>
+        </div>
+      </form>`), true);
+
+    $("#cancelModal").addEventListener("click", closeModal);
+    $("#deleteUploadInv")?.addEventListener("click", async () => {
+      if (!confirm("Delete this invoice and its uploaded file?")) return;
+      if (inv.file?.id) await deleteAttachment(inv.file.id);
+      state.invoices = state.invoices.filter(x => x.id !== id);
+      save(); closeModal(); render(); toast("Invoice deleted");
+    });
+
+    $("#uploadInvForm").addEventListener("submit", async e => {
+      e.preventDefault();
+      const form = e.target;
+      const fd = Object.fromEntries(new FormData(form).entries());
+      const file = form.file.files[0];
+
+      if (!inv && !file) { toast("Choose a PDF to upload"); return; }
+      if (file && file.size > MAX_FILE_SIZE) {
+        toast(`That file is ${fmtBytes(file.size)} — the limit is ${fmtBytes(MAX_FILE_SIZE)}`);
+        return;
+      }
+
+      const btn = $("#uploadSubmit");
+      btn.disabled = true;
+      btn.textContent = file ? "Uploading…" : "Saving…";
+
+      try {
+        let fileMeta = inv?.file || null;
+        if (file) {
+          const fileId = uid();
+          const data = await readFileAsBase64(file);
+          const rec = { name: file.name, type: file.type || "application/pdf", size: file.size, data };
+          const { cached, synced } = await saveAttachment(fileId, rec);
+          if (!cached && !synced) throw new Error("The file could not be saved");
+          // Replacing a file leaves the old one behind otherwise.
+          if (inv?.file?.id) await deleteAttachment(inv.file.id);
+          fileMeta = { id: fileId, name: rec.name, type: rec.type, size: rec.size, synced };
+          if (!synced && cloud.user) {
+            toast(`Saved — ${fmtBytes(file.size)} is too big to sync, so it stays on this device`);
+          }
+        }
+
+        const data = {
+          kind: "uploaded",
+          number: fd.number || "",
+          clientId: fd.clientId,
+          eventId: fd.eventId,
+          status: fd.status,
+          issueDate: fd.issueDate,
+          dueDate: fd.dueDate,
+          manualTotal: Number(fd.manualTotal) || 0,
+          notes: fd.notes,
+          file: fileMeta,
+          groups: [], discounts: [], taxRate: 0,
+        };
+
+        if (inv) {
+          if (data.status === "paid" && inv.status !== "paid") data.paidDate = todayISO();
+          Object.assign(inv, data);
+        } else {
+          const record = { id: uid(), payments: [], ...data };
+          if (record.status === "paid") {
+            record.paidDate = todayISO();
+            record.payments = [{ id: uid(), date: todayISO(), amount: record.manualTotal, method: "", note: "Paid in full" }];
+          }
+          state.invoices.push(record);
+          state.settings.nextInvoiceNumber = (state.settings.nextInvoiceNumber || 1) + 1;
+        }
+
+        save(); closeModal(); render();
+        toast(inv ? "Invoice updated" : "Invoice uploaded 📎");
+        openInvoiceDetail(inv ? id : state.invoices[state.invoices.length - 1].id);
+      } catch (err) {
+        console.error(err);
+        btn.disabled = false;
+        btn.textContent = inv ? "Save changes" : "Upload invoice";
+        toast(err.message || "Upload failed — please try again");
+      }
+    });
+  }
+
+  // Renders the uploaded file into an already-open invoice detail modal.
+  async function mountAttachmentPreview(inv) {
+    const host = $("#pdfHost");
+    if (!host) return;
+    const rec = inv.file ? await loadAttachment(inv.file.id) : null;
+    if (!$("#pdfHost")) return;   // modal closed while loading
+
+    if (!rec) {
+      host.innerHTML = `<div class="pdf-missing">
+        <strong>File not available on this device.</strong><br>
+        ${inv.file && inv.file.synced === false
+          ? "It was too large to sync, so it only exists on the device it was uploaded from. Upload it again here to attach a copy."
+          : "It may still be downloading, or it was removed. Try again, or upload the file again from Edit."}
+      </div>`;
+      return;
+    }
+
+    const url = trackObjectUrl(URL.createObjectURL(attachmentBlob(rec)));
+    const isPdf = (rec.type || "").includes("pdf");
+    // Some browsers (notably iOS Safari) won't render a PDF inline, so
+    // always point at the buttons that definitely work.
+    host.innerHTML = isPdf
+      ? `<iframe class="pdf-frame" src="${url}#view=FitH" title="${escapeHtml(rec.name)}"></iframe>
+         <div class="pdf-fallback">Preview not showing? Use <strong>Open / Print</strong> or <strong>Download</strong> below.</div>`
+      : `<img class="pdf-image" src="${url}" alt="${escapeHtml(rec.name)}">`;
+
+    const dl = $("#invDownload");
+    if (dl) { dl.href = url; dl.download = rec.name; }
+    const open = $("#invOpenPdf");
+    if (open) open.addEventListener("click", () => window.open(url, "_blank"));
   }
 
   /* ---------- Invoice document (RND Entertainment design) ---------- */
@@ -1262,17 +1454,29 @@
         </div>` : `<div class="pay-actions"><button class="btn btn-sm" id="invAddPayment">+ Record another payment</button></div>`}
       </div>
 
-      <div class="doc-preview">${invoiceDocHtml(inv)}</div>
+      ${isUploaded(inv)
+        ? `<div class="pdf-panel">
+             <div class="pdf-head">
+               <span>📎 ${escapeHtml(inv.file?.name || "Uploaded invoice")}${inv.file ? ` · ${fmtBytes(inv.file.size)}` : ""}</span>
+               ${inv.file?.synced === false ? `<span class="pdf-local">this device only</span>` : ""}
+             </div>
+             <div id="pdfHost" class="pdf-host"><div class="pdf-loading">Loading file…</div></div>
+           </div>`
+        : `<div class="doc-preview">${invoiceDocHtml(inv)}</div>`}
       <div class="modal-actions" style="flex-wrap:wrap">
         ${status === "draft" ? `<button class="btn" id="invMarkSent">Mark sent</button>` : ""}
-        <button class="btn" id="invPrint">🖨 Print / PDF</button>
+        ${isUploaded(inv)
+          ? `<a class="btn" id="invDownload" href="#" download>⬇ Download</a>
+             <button class="btn" id="invOpenPdf">🖨 Open / Print</button>`
+          : `<button class="btn" id="invPrint">🖨 Print / PDF</button>`}
         ${c?.email ? `<button class="btn" id="invEmail">✉️ Email (mail app)</button>` : ""}
-        ${c?.email ? `<button class="btn btn-primary" id="invGmail">📨 Send via Gmail</button>` : ""}
+        ${c?.email ? `<button class="btn btn-primary" id="invGmail">📨 Send via Gmail${isUploaded(inv) ? " with PDF" : ""}</button>` : ""}
         <button class="btn" id="invEdit">Edit</button>
       </div>
       ${!gmailOn && c?.email ? `<div class="gmail-hint">Tip: connect Gmail in <a href="#" id="goSettings">Settings</a> to send invoices directly from here.</div>` : ""}`), true);
 
-    $("#invEdit").addEventListener("click", () => openInvoiceForm(id));
+    $("#invEdit").addEventListener("click", () => isUploaded(inv) ? openUploadInvoiceForm(id) : openInvoiceForm(id));
+    if (isUploaded(inv)) mountAttachmentPreview(inv);
     $("#invAddPayment")?.addEventListener("click", () => openPaymentForm(id));
     $("#invDeposit50")?.addEventListener("click", () =>
       openPaymentForm(id, { amount: Math.round((total / 2) * 100) / 100, note: "Deposit" }));
@@ -1289,7 +1493,7 @@
       inv.status = "sent";
       save(); render(); openInvoiceDetail(id); toast("Marked as sent");
     });
-    $("#invPrint").addEventListener("click", () => printInvoice(inv));
+    $("#invPrint")?.addEventListener("click", () => printInvoice(inv));
     $("#invEmail")?.addEventListener("click", () => emailInvoice(inv));
     $("#invGmail")?.addEventListener("click", () => sendInvoiceViaGmail(inv, id));
     $("#goSettings")?.addEventListener("click", e => { e.preventDefault(); closeModal(); go("settings"); });
@@ -1395,13 +1599,17 @@
       `Due: ${fmtDate(inv.dueDate)}`,
       ``,
     ];
-    (inv.groups || []).forEach(g => {
-      if (g.name || g.items.length) lines.push(`${g.name || "Services"}:`);
-      g.items.forEach(it => {
-        lines.push(`  • ${it.name} — ${it.qty} × ${it.comp ? "COMP" : money(it.price)}${it.comp ? "" : " = " + money(itemAmount(it))}`);
-        (it.details || []).forEach(dt => lines.push(`      - ${dt.name} × ${dt.qty}`));
+    if (isUploaded(inv)) {
+      lines.push(`The full invoice is attached as a PDF.`);
+    } else {
+      (inv.groups || []).forEach(g => {
+        if (g.name || g.items.length) lines.push(`${g.name || "Services"}:`);
+        g.items.forEach(it => {
+          lines.push(`  • ${it.name} — ${it.qty} × ${it.comp ? "COMP" : money(it.price)}${it.comp ? "" : " = " + money(itemAmount(it))}`);
+          (it.details || []).forEach(dt => lines.push(`      - ${dt.name} × ${dt.qty}`));
+        });
       });
-    });
+    }
     (inv.discounts || []).forEach(d => lines.push(`  Discount — ${d.name}: −${money(d.amount)}`));
     if (Number(inv.taxRate) > 0) lines.push(`  Tax (${inv.taxRate}%): ${money(invTax(inv))}`);
     lines.push(``, `Invoice total: ${money(invTotal(inv))}`);
@@ -1496,6 +1704,9 @@
     const c = clientById(inv.clientId);
     const rowStyle = 'padding:8px 12px;border-bottom:1px solid #eee;font-size:14px;';
     let rows = "";
+    if (isUploaded(inv)) {
+      rows += `<tr><td colspan="3" style="${rowStyle}">📎 Invoice attached as a PDF</td><td style="${rowStyle}text-align:right;">${money(invTotal(inv))}</td></tr>`;
+    }
     (inv.groups || []).forEach(g => {
       rows += `<tr><td colspan="3" style="${rowStyle}font-weight:bold;color:#e85d26;border-bottom:2px solid #3b7dd8;">${escapeHtml(g.name || "Services")}</td><td style="${rowStyle}text-align:right;font-weight:bold;color:#e85d26;border-bottom:2px solid #3b7dd8;">${g.items.some(it => !it.comp) ? money(groupSum(g)) : "COMP"}</td></tr>`;
       g.items.forEach(it => {
@@ -1553,17 +1764,48 @@
     </body></html>`;
   }
 
-  async function gmailSend(to, subject, html) {
-    const mime = [
+  async function gmailSend(to, subject, html, attachment = null) {
+    const headers = [
       `To: ${to}`,
       `Subject: =?UTF-8?B?${b64utf8(subject)}?=`,
       "MIME-Version: 1.0",
-      'Content-Type: text/html; charset="UTF-8"',
-      "Content-Transfer-Encoding: base64",
-      "",
-      b64utf8(html),
-    ].join("\r\n");
-    const raw = b64utf8(mime).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    ];
+    let mime;
+
+    if (attachment) {
+      const boundary = "djcf_" + uid();
+      mime = [
+        ...headers,
+        `Content-Type: multipart/mixed; boundary="${boundary}"`,
+        "",
+        `--${boundary}`,
+        'Content-Type: text/html; charset="UTF-8"',
+        "Content-Transfer-Encoding: base64",
+        "",
+        b64utf8(html),
+        "",
+        `--${boundary}`,
+        `Content-Type: ${attachment.type || "application/pdf"}; name="${attachment.name}"`,
+        `Content-Disposition: attachment; filename="${attachment.name}"`,
+        "Content-Transfer-Encoding: base64",
+        "",
+        // Gmail wants base64 wrapped at 76 characters per line.
+        attachment.data.replace(/(.{76})/g, "$1\r\n"),
+        "",
+        `--${boundary}--`,
+      ].join("\r\n");
+    } else {
+      mime = [
+        ...headers,
+        'Content-Type: text/html; charset="UTF-8"',
+        "Content-Transfer-Encoding: base64",
+        "",
+        b64utf8(html),
+      ].join("\r\n");
+    }
+
+    // Raw MIME is already ASCII here, so btoa is safe without re-encoding.
+    const raw = btoa(mime).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
       method: "POST",
       headers: { Authorization: `Bearer ${gmailToken.token}`, "Content-Type": "application/json" },
@@ -1588,8 +1830,15 @@
         toast("Connecting to Gmail…");
         await connectGmail();
       }
-      toast("Sending…");
-      await gmailSend(c.email, invoiceEmailSubject(inv), invoiceEmailHtml(inv));
+      // An uploaded invoice goes out as the client's own PDF attachment.
+      let attachment = null;
+      if (isUploaded(inv) && inv.file) {
+        const rec = await loadAttachment(inv.file.id);
+        if (!rec) { toast("That invoice file isn't available on this device"); return; }
+        attachment = rec;
+      }
+      toast(attachment ? "Sending with PDF…" : "Sending…");
+      await gmailSend(c.email, invoiceEmailSubject(inv), invoiceEmailHtml(inv), attachment);
       if (inv.status !== "paid") inv.status = "sent";
       save(); render();
       toast(`Invoice ${inv.number} emailed to ${c.email} 🎉`);
@@ -1796,14 +2045,33 @@
       toast("Gmail disconnected");
     });
 
-    $("#exportData", root).addEventListener("click", () => {
-      const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `djclientflow-backup-${todayISO()}.json`;
-      a.click();
-      URL.revokeObjectURL(a.href);
-      toast("Backup downloaded");
+    $("#exportData", root).addEventListener("click", async e => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        // Uploaded PDFs live outside `state`, so pull them in or the
+        // backup would quietly lose them.
+        const attachments = {};
+        for (const inv of state.invoices) {
+          if (!isUploaded(inv) || !inv.file?.id) continue;
+          const rec = await loadAttachment(inv.file.id);
+          if (rec) attachments[inv.file.id] = rec;
+        }
+        const payload = { ...state, attachments };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `djclientflow-backup-${todayISO()}.json`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        const n = Object.keys(attachments).length;
+        toast(n ? `Backup downloaded (with ${n} uploaded file${n === 1 ? "" : "s"})` : "Backup downloaded");
+      } catch (err) {
+        console.error(err);
+        toast("Export failed");
+      } finally {
+        btn.disabled = false;
+      }
     });
 
     $("#importData", root).addEventListener("click", () => $("#importFile", root).click());
@@ -1811,19 +2079,30 @@
       const file = e.target.files[0];
       if (!file) return;
       const reader = new FileReader();
-      reader.onload = () => {
+      reader.onload = async () => {
         try {
           const data = JSON.parse(reader.result);
           if (!data.settings || !Array.isArray(data.clients)) throw new Error("Not a valid backup");
           if (!confirm("Importing will replace ALL current data. Continue?")) return;
+          const keptLocal = {};
+          LOCAL_ONLY_SETTINGS.forEach(k => { keptLocal[k] = state.settings[k]; });
           state = {
-            settings: { ...defaultSettings(), ...data.settings },
+            settings: { ...defaultSettings(), ...data.settings, ...keptLocal },
             clients: data.clients || [],
             events: data.events || [],
             invoices: (data.invoices || []).map(migrateInvoice),
           };
           save(); render(); toast("Backup imported");
-        } catch {
+
+          // Put any uploaded files back where the app looks for them.
+          const attachments = data.attachments || {};
+          const ids = Object.keys(attachments);
+          for (const fileId of ids) {
+            await saveAttachment(fileId, attachments[fileId]);
+          }
+          if (ids.length) toast(`Restored ${ids.length} uploaded file${ids.length === 1 ? "" : "s"}`);
+        } catch (err) {
+          console.warn(err);
           toast("Import failed — that file isn't a valid backup");
         }
       };
@@ -2004,6 +2283,117 @@ const firebaseConfig = {
 
     save(); render();
     toast("Sample data loaded — explore away! 🎉");
+  }
+
+  /* ================= ATTACHMENTS (uploaded invoice PDFs) =================
+     Files are cached in IndexedDB on the device and, when small enough,
+     mirrored to their own Firestore document so they follow the account
+     to other devices. The main data document only ever holds metadata. */
+
+  const ATTACH_DB = "djclientflow-files";
+  const ATTACH_STORE = "files";
+  const SYNC_FILE_LIMIT = 700 * 1024;        // base64 of this still fits one Firestore doc
+  const MAX_FILE_SIZE = 10 * 1024 * 1024;
+
+  let attachDbPromise = null;
+  function attachDb() {
+    if (attachDbPromise) return attachDbPromise;
+    attachDbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(ATTACH_DB, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(ATTACH_STORE)) db.createObjectStore(ATTACH_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return attachDbPromise;
+  }
+
+  function idbRun(mode, fn) {
+    return attachDb().then(db => new Promise((resolve, reject) => {
+      const tx = db.transaction(ATTACH_STORE, mode);
+      const req = fn(tx.objectStore(ATTACH_STORE));
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    }));
+  }
+
+  function fileDocRef(fileId) {
+    if (!cloud.user || !cloud.db || !cloud.fs) return null;
+    return cloud.fs.doc(cloud.db, "djclientflow", cloud.user.uid, "files", fileId);
+  }
+
+  // rec: { name, type, size, data } where data is base64 without the data: prefix
+  async function saveAttachment(fileId, rec) {
+    let cached = true;
+    try { await idbRun("readwrite", store => store.put(rec, fileId)); }
+    catch (e) { cached = false; console.warn("Could not cache file locally", e); }
+
+    const ref = fileDocRef(fileId);
+    // null means "no account to sync to", which is different from
+    // "should have synced but didn't" — only the latter is worth flagging.
+    let synced = ref ? false : null;
+    if (ref && rec.size <= SYNC_FILE_LIMIT) {
+      try { await cloud.fs.setDoc(ref, rec); synced = true; }
+      catch (e) { console.warn("Could not sync file to the cloud", e); }
+    }
+    return { cached, synced };
+  }
+
+  async function loadAttachment(fileId) {
+    try {
+      const local = await idbRun("readonly", store => store.get(fileId));
+      if (local) return local;
+    } catch (e) { console.warn("Local file read failed", e); }
+
+    const ref = fileDocRef(fileId);
+    if (!ref) return null;
+    try {
+      const snap = await cloud.fs.getDoc(ref);
+      if (!snap.exists()) return null;
+      const rec = snap.data();
+      try { await idbRun("readwrite", store => store.put(rec, fileId)); } catch { /* cache is optional */ }
+      return rec;
+    } catch (e) {
+      console.warn("Cloud file read failed", e);
+      return null;
+    }
+  }
+
+  async function deleteAttachment(fileId) {
+    try { await idbRun("readwrite", store => store.delete(fileId)); } catch { /* ignore */ }
+    const ref = fileDocRef(fileId);
+    if (ref) { try { await cloud.fs.deleteDoc(ref); } catch (e) { console.warn(e); } }
+  }
+
+  function attachmentBlob(rec) {
+    const bin = atob(rec.data);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: rec.type || "application/pdf" });
+  }
+
+  function readFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function fmtBytes(n) {
+    if (!n) return "0 KB";
+    return n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
+  }
+
+  // Blob URLs opened for a preview are revoked when the modal closes.
+  let openObjectUrls = [];
+  function trackObjectUrl(url) { openObjectUrls.push(url); return url; }
+  function releaseObjectUrls() {
+    openObjectUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch { /* ignore */ } });
+    openObjectUrls = [];
   }
 
   /* ================= CLOUD SYNC (Firebase) =================

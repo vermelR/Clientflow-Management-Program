@@ -9,6 +9,12 @@ service cloud.firestore {
     match /djclientflow/{userId} {
       allow read, write: if request.auth != null
                          && request.auth.uid == userId;
+
+      // Uploaded invoice PDFs belong to the same account.
+      match /files/{fileId} {
+        allow read, write: if request.auth != null
+                           && request.auth.uid == userId;
+      }
     }
 
     // Anything else is denied.
