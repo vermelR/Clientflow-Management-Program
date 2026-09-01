@@ -1,27 +1,31 @@
 /* ============ DJ ClientFlow ============ */
 :root {
-  --sidebar-bg: #16122b;
-  --sidebar-text: #b9b3d6;
+  /* Black primary, orange secondary. The orange is the same one the
+     RND invoice design uses, so app and paperwork match. */
+  --sidebar-bg: #0b0b0b;
+  --sidebar-text: #a9a29c;
   --sidebar-active: #ffffff;
-  --accent: #7c5cff;
-  --accent-dark: #6647e6;
-  --accent-soft: #efeaff;
-  --bg: #f6f5fa;
+  --primary: #141414;
+  --primary-dark: #000000;
+  --accent: #e85d26;
+  --accent-dark: #bd4315;
+  --accent-soft: #fdece3;
+  --bg: #f7f6f5;
   --card: #ffffff;
-  --text: #221e35;
-  --muted: #6f6a86;
-  --border: #e6e3f0;
+  --text: #1b1917;
+  --muted: #6f6862;
+  --border: #e7e2de;
   --green: #1d9e6f;
   --green-soft: #e2f6ee;
   --amber: #b57a08;
   --amber-soft: #fdf2d9;
   --red: #d24444;
   --red-soft: #fbe7e7;
-  --blue: #2f6fd0;
-  --blue-soft: #e4eefc;
-  --gray-soft: #eeedf3;
+  --blue: #3b7dd8;
+  --blue-soft: #e6eefb;
+  --gray-soft: #efece9;
   --radius: 12px;
-  --shadow: 0 1px 3px rgba(30, 20, 70, 0.08), 0 6px 18px rgba(30, 20, 70, 0.05);
+  --shadow: 0 1px 3px rgba(20, 15, 10, 0.08), 0 6px 18px rgba(20, 15, 10, 0.06);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -39,16 +43,17 @@ body {
 .auth-screen {
   min-height: 100vh; display: flex; align-items: center; justify-content: center;
   padding: 32px 16px;
-  background: radial-gradient(1100px 620px at 20% -10%, #2a1f5c 0%, #16122b 55%, #0f0c1e 100%);
+  background: radial-gradient(900px 560px at 18% -10%, #3a1b0c 0%, #141210 52%, #0a0a0a 100%);
 }
 .auth-card {
   width: 400px; max-width: 100%; background: var(--card);
   border-radius: 18px; padding: 34px 32px 26px; text-align: center;
-  box-shadow: 0 24px 70px rgba(8, 4, 30, 0.55);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
 }
 .auth-logo {
   width: 60px; height: 60px; margin: 0 auto 14px; border-radius: 16px;
-  background: linear-gradient(135deg, #7c5cff, #b84dff);
+  background: linear-gradient(135deg, #171717, #2b2b2b);
+  border: 1px solid rgba(232, 93, 38, 0.55);
   display: flex; align-items: center; justify-content: center; font-size: 30px;
 }
 .auth-brand { font-size: 21px; font-weight: 800; letter-spacing: -0.02em; }
@@ -133,7 +138,8 @@ body {
 .brand { display: flex; align-items: center; gap: 10px; padding: 20px 18px; }
 .brand-logo {
   width: 42px; height: 42px; border-radius: 10px;
-  background: linear-gradient(135deg, #7c5cff, #b84dff);
+  background: linear-gradient(135deg, #1b1b1b, #2a2a2a);
+  border: 1px solid rgba(232, 93, 38, 0.5);
   display: flex; align-items: center; justify-content: center;
   font-size: 22px;
 }
@@ -150,10 +156,11 @@ body {
 }
 .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: #fff; }
 .nav-item.active { background: var(--accent); color: #fff; }
+.nav-item.active:hover { background: var(--accent-dark); }
 .nav-icon { font-size: 16px; width: 20px; text-align: center; }
 .nav-dot {
-  width: 8px; height: 8px; border-radius: 50%; background: #ff7a59;
-  margin-left: auto; flex-shrink: 0; box-shadow: 0 0 0 3px rgba(255, 122, 89, 0.22);
+  width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+  margin-left: auto; flex-shrink: 0; box-shadow: 0 0 0 3px rgba(232, 93, 38, 0.25);
 }
 
 /* ---------- What's new ---------- */
@@ -217,8 +224,8 @@ body {
   text-decoration: none;
 }
 .btn:hover { border-color: var(--accent); color: var(--accent); }
-.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn-primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); color: #fff; }
+.btn-primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-dark); border-color: var(--primary-dark); color: #fff; }
 .btn-danger { color: var(--red); }
 .btn-danger:hover { border-color: var(--red); background: var(--red-soft); color: var(--red); }
 .btn-sm { padding: 5px 10px; font-size: 12.5px; border-radius: 7px; }
@@ -272,7 +279,7 @@ td .sub { display: block; font-size: 12px; color: var(--muted); margin-top: 2px;
   padding: 3px 10px; border-radius: 20px; white-space: nowrap;
 }
 .badge-paid, .badge-completed, .badge-booked { background: var(--green-soft); color: var(--green); }
-.badge-sent { background: var(--blue-soft); color: var(--blue); }
+.badge-sent { background: #ebe7e3; color: #43403c; }
 .badge-draft, .badge-cancelled { background: var(--gray-soft); color: var(--muted); }
 .badge-overdue { background: var(--red-soft); color: var(--red); }
 .badge-inquiry, .badge-partial { background: var(--amber-soft); color: var(--amber); }
@@ -330,7 +337,7 @@ td .sub { display: block; font-size: 12px; color: var(--muted); margin-top: 2px;
   color: var(--text); transition: border-color 0.15s;
 }
 .field input:focus, .field select:focus, .field textarea:focus {
-  outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(124, 92, 255, 0.12);
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(232, 93, 38, 0.15);
 }
 .field textarea { resize: vertical; min-height: 70px; }
 
@@ -673,17 +680,32 @@ tr.row-hotel td.hotel-label { font-weight: 700; color: #e85d26; font-size: 13px;
 .reminders-fab:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(30, 20, 70, 0.2); }
 .fab-icon { font-size: 15px; }
 .fab-count {
-  background: var(--amber); color: #fff; font-size: 11.5px; font-weight: 800;
+  background: var(--accent); color: #fff; font-size: 11.5px; font-weight: 800;
   min-width: 19px; height: 19px; border-radius: 10px;
   display: inline-flex; align-items: center; justify-content: center; padding: 0 5px;
 }
 
-.reminders-backdrop { position: fixed; inset: 0; background: rgba(20, 14, 45, 0.35); z-index: 95; }
+.reminders-backdrop {
+  position: fixed; inset: 0; background: rgba(10, 10, 10, 0.4); z-index: 95;
+  opacity: 0; pointer-events: none; transition: opacity 0.25s ease;
+}
+.reminders-backdrop.show { opacity: 1; pointer-events: auto; }
+
 .reminders-panel {
   position: fixed; top: 0; right: 0; bottom: 0; width: 380px; max-width: 92vw;
   background: var(--card); z-index: 96; overflow-y: auto;
-  box-shadow: -8px 0 40px rgba(10, 5, 40, 0.25);
+  box-shadow: -8px 0 40px rgba(0, 0, 0, 0.3);
   display: flex; flex-direction: column;
+  /* Slides in from the edge; kept out of the tab order while closed. */
+  visibility: hidden; transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1), visibility 0s linear 0.3s;
+}
+.reminders-panel.open {
+  visibility: visible; transform: translateX(0);
+  transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1), visibility 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .reminders-panel, .reminders-backdrop { transition-duration: 0.01s; }
 }
 .rem-head {
   display: flex; align-items: flex-start; justify-content: space-between;
@@ -736,7 +758,7 @@ tr.row-hotel td.hotel-label { font-weight: 700; color: #e85d26; font-size: 13px;
 }
 .rem-chip.paid { background: var(--green-soft); color: var(--green); }
 .rem-chip.partial { background: var(--amber-soft); color: var(--amber); }
-.rem-chip.unpaid { background: var(--blue-soft); color: var(--blue); }
+.rem-chip.unpaid { background: #ebe7e3; color: #43403c; }
 .rem-chip.none { background: var(--gray-soft); color: var(--muted); }
 .rem-chip.overdue { background: var(--red-soft); color: var(--red); }
 .rem-empty { font-size: 13px; color: var(--muted); padding: 8px 10px 16px; line-height: 1.6; }

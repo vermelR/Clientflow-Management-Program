@@ -1,7 +1,7 @@
 /* DJ ClientFlow service worker — makes the app installable and lets it
    launch with no connection. Bump CACHE when the app files change. */
 
-const CACHE = "djclientflow-v3";
+const CACHE = "djclientflow-v4";
 const SHELL = [
   "./",
   "index.html",

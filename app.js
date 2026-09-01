@@ -2880,19 +2880,19 @@ const firebaseConfig = {
 
   function openReminders() {
     renderReminders();
-    $("#remindersPanel").classList.remove("hidden");
-    $("#remindersBackdrop").classList.remove("hidden");
+    $("#remindersPanel").classList.add("open");
+    $("#remindersBackdrop").classList.add("show");
     $("#remindersBtn").setAttribute("aria-expanded", "true");
   }
 
   function closeReminders() {
-    $("#remindersPanel").classList.add("hidden");
-    $("#remindersBackdrop").classList.add("hidden");
+    $("#remindersPanel").classList.remove("open");
+    $("#remindersBackdrop").classList.remove("show");
     $("#remindersBtn").setAttribute("aria-expanded", "false");
   }
 
   function remindersOpen() {
-    return !$("#remindersPanel").classList.contains("hidden");
+    return $("#remindersPanel").classList.contains("open");
   }
 
   $("#remindersBtn").addEventListener("click", () => remindersOpen() ? closeReminders() : openReminders());

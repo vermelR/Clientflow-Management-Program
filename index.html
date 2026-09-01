@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DJ ClientFlow — Client & Invoice Manager</title>
   <meta name="description" content="Manage DJ clients, gigs and invoices in one place.">
-  <meta name="theme-color" content="#16122b">
+  <meta name="theme-color" content="#0b0b0b">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -44,16 +44,17 @@
     <main class="main" id="main">
       <!-- Views are rendered here by app.js -->
     </main>
-  </div>
 
-    <!-- Reminders: upcoming gigs and what's still owed -->
+    <!-- Reminders: upcoming gigs and what's still owed. Inside the app
+         shell so it never shows over the login screen. -->
     <button class="reminders-fab" id="remindersBtn" title="Upcoming gigs and payments" aria-expanded="false">
       <span class="fab-icon">🔔</span>
       <span class="fab-label">Reminders</span>
       <span class="fab-count hidden" id="remindersCount"></span>
     </button>
-    <div class="reminders-backdrop hidden" id="remindersBackdrop"></div>
-    <aside class="reminders-panel hidden" id="remindersPanel" aria-label="Reminders"></aside>
+    <div class="reminders-backdrop" id="remindersBackdrop"></div>
+    <aside class="reminders-panel" id="remindersPanel" aria-label="Reminders"></aside>
+  </div>
 
   <!-- Modal -->
   <div class="modal-overlay hidden" id="modalOverlay">
