@@ -372,6 +372,10 @@
   };
 
   function go(view) {
+    if (currentView === "settings" && view !== "settings") {
+      commitSettingsRef?.();       // don't lose edits by navigating away
+      commitSettingsRef = null;
+    }
     currentView = view;
     $$(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.view === view));
     render();
@@ -516,6 +520,9 @@
   /* ================= CLIENTS ================= */
 
   let clientSearch = "";
+  // Set while the Settings view is mounted; lets cards that re-render the
+  // page flush any typing in the main form first.
+  let commitSettingsRef = null;
 
   function renderClients(root) {
     const q = clientSearch.toLowerCase();
@@ -2287,8 +2294,9 @@
               <textarea name="hotelText" rows="4">${escapeHtml(s.hotelText)}</textarea>
             </div>
           </div>
-          <div class="modal-actions" style="justify-content:flex-start">
+          <div class="modal-actions" style="justify-content:flex-start;align-items:center;gap:12px">
             <button type="submit" class="btn btn-primary">Save settings</button>
+            <span class="saved-note" id="settingsSaved"></span>
           </div>
         </form>
       </div>
@@ -2391,22 +2399,50 @@
     renderCloudCard();
     renderUpdatesCard();
 
-    $("#settingsForm", root).addEventListener("submit", e => {
-      e.preventDefault();
-      const data = Object.fromEntries(new FormData(e.target).entries());
+    const settingsForm = $("#settingsForm", root);
+
+    // Everything else in the app saves the moment you act, so these
+    // fields do too — typing your business name and then clicking away
+    // (or using a button in another card, which re-renders this one)
+    // used to lose it silently.
+    function commitSettings() {
+      const data = Object.fromEntries(new FormData(settingsForm).entries());
       data.taxRate = Number(data.taxRate) || 0;
       data.nextInvoiceNumber = Number(data.nextInvoiceNumber) || 1;
       data.defaultDueDays = Number(data.defaultDueDays) || 14;
       Object.assign(state.settings, data);
-      // These live in their own cards but shouldn't be lost if someone
-      // types them and hits the main Save button.
+      // These live in their own cards but are saved together.
       const cidEl = $("#googleClientId", root);   // absent when Gmail rides on the signed-in account
       if (cidEl) state.settings.googleClientId = cidEl.value.trim();
-      state.settings.calendlyUrl = $("#calendlyUrl", root).value.trim();
-      save(); toast("Settings saved");
+      const calEl = $("#calendlyUrl", root);
+      if (calEl) state.settings.calendlyUrl = calEl.value.trim();
+      save();
+    }
+    commitSettingsRef = commitSettings;   // so other cards can flush first
+
+    let settingsSaveTimer;
+    const savedNote = $("#settingsSaved", root);
+    settingsForm.addEventListener("input", () => {
+      clearTimeout(settingsSaveTimer);
+      settingsSaveTimer = setTimeout(() => {
+        commitSettings();
+        if (savedNote) {
+          savedNote.textContent = "Saved ✓";
+          savedNote.classList.add("show");
+          setTimeout(() => savedNote.classList.remove("show"), 1800);
+        }
+      }, 600);
+    });
+
+    settingsForm.addEventListener("submit", e => {
+      e.preventDefault();
+      clearTimeout(settingsSaveTimer);
+      commitSettings();
+      toast("Settings saved");
     });
 
     $("#saveCalendly", root).addEventListener("click", () => {
+      commitSettingsRef?.();       // keep anything typed in the main form
       const raw = $("#calendlyUrl", root).value.trim();
       if (raw && !/^https:\/\/\S+\.\S+/.test(raw)) {
         toast("That doesn't look like a link — paste the full https:// address");
@@ -2448,6 +2484,7 @@
     });
 
     $("#logoImgInput", root).addEventListener("change", e => {
+      commitSettingsRef?.();
       const file = e.target.files[0];
       if (!file) return;
       if (file.size > 400 * 1024) { toast("Logo image too large — keep it under 400 KB"); return; }
@@ -2464,6 +2501,7 @@
     });
 
     $("#gmailConnect", root).addEventListener("click", async () => {
+      commitSettingsRef?.();
       const cidEl = $("#googleClientId", root);   // absent when Gmail rides on the signed-in account
       if (cidEl) state.settings.googleClientId = cidEl.value.trim();
       save();
