@@ -153,7 +153,7 @@ body {
   transition: margin-left 0.26s cubic-bezier(0.32, 0.72, 0, 1), visibility 0s linear 0.26s;
 }
 /* Keep the first view out from under the button once the sidebar is gone */
-.app.sidebar-hidden .main { padding-left: 68px; }
+.app.sidebar-hidden .main { padding-left: 68px; padding-right: 68px; }
 
 .sidebar-backdrop {
   position: fixed; inset: 0; background: rgba(10, 10, 10, 0.45); z-index: 105;
@@ -248,7 +248,11 @@ body {
 #firebaseCfg { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 
 /* ---------- Main ---------- */
-.main { flex: 1; padding: 28px 34px 60px; max-width: 1200px; min-width: 0; }
+.main {
+  flex: 1; min-width: 0; max-width: 1320px;
+  margin: 0 auto;            /* soaks up the leftover width evenly */
+  padding: 28px 34px 60px;
+}
 
 .view-header {
   display: flex; align-items: center; justify-content: space-between;
