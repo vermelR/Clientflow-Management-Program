@@ -46,6 +46,15 @@
     </main>
   </div>
 
+    <!-- Reminders: upcoming gigs and what's still owed -->
+    <button class="reminders-fab" id="remindersBtn" title="Upcoming gigs and payments" aria-expanded="false">
+      <span class="fab-icon">🔔</span>
+      <span class="fab-label">Reminders</span>
+      <span class="fab-count hidden" id="remindersCount"></span>
+    </button>
+    <div class="reminders-backdrop hidden" id="remindersBackdrop"></div>
+    <aside class="reminders-panel hidden" id="remindersPanel" aria-label="Reminders"></aside>
+
   <!-- Modal -->
   <div class="modal-overlay hidden" id="modalOverlay">
     <div class="modal" id="modal" role="dialog" aria-modal="true"></div>

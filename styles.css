@@ -658,3 +658,92 @@ tr.row-hotel td.hotel-label { font-weight: 700; color: #e85d26; font-size: 13px;
   color: var(--red); padding: 9px 12px; border-radius: 8px;
 }
 .cal-hint { margin-top: 12px; font-size: 12.5px; color: var(--muted); }
+
+/* ---------- Reminders ---------- */
+.reminders-fab {
+  position: fixed; right: 22px; bottom: 22px; z-index: 90;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--card); color: var(--text);
+  border: 1px solid var(--border); border-radius: 24px;
+  padding: 10px 16px; font-size: 13.5px; font-weight: 600;
+  font-family: inherit; cursor: pointer;
+  box-shadow: 0 6px 20px rgba(30, 20, 70, 0.14);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.reminders-fab:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(30, 20, 70, 0.2); }
+.fab-icon { font-size: 15px; }
+.fab-count {
+  background: var(--amber); color: #fff; font-size: 11.5px; font-weight: 800;
+  min-width: 19px; height: 19px; border-radius: 10px;
+  display: inline-flex; align-items: center; justify-content: center; padding: 0 5px;
+}
+
+.reminders-backdrop { position: fixed; inset: 0; background: rgba(20, 14, 45, 0.35); z-index: 95; }
+.reminders-panel {
+  position: fixed; top: 0; right: 0; bottom: 0; width: 380px; max-width: 92vw;
+  background: var(--card); z-index: 96; overflow-y: auto;
+  box-shadow: -8px 0 40px rgba(10, 5, 40, 0.25);
+  display: flex; flex-direction: column;
+}
+.rem-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  padding: 20px 20px 16px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--card); z-index: 1;
+}
+.rem-close {
+  background: none; border: none; font-size: 22px; color: var(--muted);
+  cursor: pointer; line-height: 1; padding: 4px; font-family: inherit;
+}
+.rem-close:hover { color: var(--text); }
+.rem-title { font-size: 17px; font-weight: 700; }
+.rem-sub { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+
+.rem-section { padding: 16px 16px 4px; }
+.rem-section-title {
+  font-size: 11px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--muted); margin: 0 4px 10px;
+}
+.rem-row {
+  display: flex; align-items: center; gap: 11px; width: 100%;
+  background: none; border: 1px solid transparent; border-radius: 10px;
+  padding: 10px; margin-bottom: 4px; cursor: pointer;
+  font-family: inherit; text-align: left; color: var(--text);
+}
+.rem-row:hover { background: var(--bg); border-color: var(--border); }
+.rem-row.overdue { background: var(--red-soft); }
+.rem-row.overdue:hover { border-color: var(--red); }
+.rem-when {
+  width: 40px; flex-shrink: 0; text-align: center;
+  background: var(--accent-soft); border-radius: 8px; padding: 5px 0;
+}
+.rem-when-day { font-size: 15px; font-weight: 800; color: var(--accent-dark); line-height: 1.1; }
+.rem-when-mon {
+  font-size: 9.5px; font-weight: 700; text-transform: uppercase;
+  color: var(--accent-dark); opacity: 0.8;
+}
+.rem-row-main { flex: 1; min-width: 0; }
+.rem-row-title {
+  font-size: 13.5px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rem-row-meta {
+  font-size: 11.5px; color: var(--muted); margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rem-chip {
+  font-size: 11px; font-weight: 700; padding: 3px 9px;
+  border-radius: 20px; white-space: nowrap; flex-shrink: 0;
+}
+.rem-chip.paid { background: var(--green-soft); color: var(--green); }
+.rem-chip.partial { background: var(--amber-soft); color: var(--amber); }
+.rem-chip.unpaid { background: var(--blue-soft); color: var(--blue); }
+.rem-chip.none { background: var(--gray-soft); color: var(--muted); }
+.rem-chip.overdue { background: var(--red-soft); color: var(--red); }
+.rem-empty { font-size: 13px; color: var(--muted); padding: 8px 10px 16px; line-height: 1.6; }
+
+@media (max-width: 860px) {
+  .reminders-fab { right: 14px; bottom: 14px; padding: 9px 13px; }
+  .fab-label { display: none; }
+}
+
+@media print { .reminders-fab, .reminders-panel, .reminders-backdrop { display: none !important; } }

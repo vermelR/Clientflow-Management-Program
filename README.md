@@ -19,6 +19,7 @@ Run it for yourself, or [host it for many DJs](#cloud-sync-and-multi-user-setup)
   - ✉️ **Email (mail app)** — or open a pre-written email in your usual mail app
 
   Printed and emailed invoices show every payment received and the remaining balance, so a client who paid a deposit sees exactly what's still owed.
+- **🔔 Reminders** — a discreet pill in the corner of every screen opens a panel showing what's coming up in the next 30 days, closest first, with each gig's payment state at a glance (Paid / balance left / unpaid / not invoiced) plus any overdue invoices. The badge counts only what still needs attention, so it disappears when you're all square.
 - **Calendar** — month view of all your gigs, color-coded by status
 - **📅 Calendly scheduling** — paste your Calendly link in Settings and a **Send booking link** button appears on every client and gig. Email it to them (via Gmail or your mail app) or copy it to text over; their name and email are already filled in on the booking page, and a gig's details ride along as a note. *They* choose the time that suits them. Turn on **Show booked calls on your calendar** and whatever they pick appears on the Calendar page — see below.
 - **Settings & Backup** — your business details for invoice headers, default payment terms, and one-click JSON export/import so your data is never locked in

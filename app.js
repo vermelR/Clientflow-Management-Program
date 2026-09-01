@@ -312,7 +312,9 @@
     if (e.target === e.currentTarget) closeModal();
   });
   document.addEventListener("keydown", e => {
-    if (e.key === "Escape") closeModal();
+    if (e.key !== "Escape") return;
+    if (remindersOpen()) closeReminders();
+    closeModal();
   });
 
   function modalShell(title, bodyHtml) {
@@ -346,6 +348,8 @@
 
   function render() {
     (views[currentView] || renderDashboard)($("#main"));
+    refreshRemindersBadge();
+    if (remindersOpen()) renderReminders();
   }
 
   $$(".nav-item").forEach(btn => btn.addEventListener("click", () => go(btn.dataset.view)));
@@ -2589,6 +2593,140 @@ const firebaseConfig = {
     save(); render();
     toast("Sample data loaded — explore away! 🎉");
   }
+
+  /* ================= REMINDERS =================
+     A discreet panel: what's coming up soon, closest first, and where
+     the money stands on each one. */
+
+  const REMINDER_WINDOW_DAYS = 30;
+
+  // Money owed across every invoice attached to a gig.
+  function gigPaymentSummary(ev) {
+    const invs = state.invoices.filter(i => i.eventId === ev.id);
+    if (!invs.length) return { kind: "none", label: "Not invoiced" };
+
+    const total = invs.reduce((s, i) => s + invTotal(i), 0);
+    const paid = invs.reduce((s, i) => s + invPaid(i), 0);
+    const balance = Math.round((total - paid) * 100) / 100;
+    const overdue = invs.some(i => invStatus(i) === "overdue");
+
+    if (balance <= 0 && paid > 0) return { kind: "paid", label: "Paid" };
+    if (paid > 0) return { kind: overdue ? "overdue" : "partial", label: `${money(balance)} left`, balance };
+    return { kind: overdue ? "overdue" : "unpaid", label: `${money(balance)} due`, balance };
+  }
+
+  function relativeDay(iso) {
+    const days = Math.round((parseISO(iso) - parseISO(todayISO())) / 86400000);
+    if (days === 0) return "Today";
+    if (days === 1) return "Tomorrow";
+    if (days < 7) return `In ${days} days`;
+    if (days < 14) return "Next week";
+    return `In ${Math.round(days / 7)} weeks`;
+  }
+
+  function upcomingReminders() {
+    const today = todayISO();
+    const end = addDaysISO(today, REMINDER_WINDOW_DAYS);
+    return state.events
+      .filter(e => e.date >= today && e.date <= end && e.status !== "cancelled")
+      .sort((a, b) => a.date.localeCompare(b.date) || (a.startTime || "").localeCompare(b.startTime || ""))
+      .map(e => ({ ev: e, pay: gigPaymentSummary(e) }));
+  }
+
+  function overdueReminders() {
+    return state.invoices
+      .filter(i => invStatus(i) === "overdue")
+      .sort((a, b) => (a.dueDate || "").localeCompare(b.dueDate || ""));
+  }
+
+  function remindersNeedingAction() {
+    return upcomingReminders().filter(r => r.pay.kind !== "paid").length + overdueReminders().length;
+  }
+
+  function refreshRemindersBadge() {
+    const badge = document.getElementById("remindersCount");
+    if (!badge) return;
+    const n = remindersNeedingAction();
+    badge.textContent = n;
+    badge.classList.toggle("hidden", n === 0);
+  }
+
+  function renderReminders() {
+    const panel = document.getElementById("remindersPanel");
+    if (!panel) return;
+    const list = upcomingReminders();
+    const overdue = overdueReminders();
+    const owed = list.reduce((s, r) => s + (r.pay.balance || 0), 0);
+
+    panel.innerHTML = `
+      <div class="rem-head">
+        <div>
+          <div class="rem-title">Reminders</div>
+          <div class="rem-sub">Next ${REMINDER_WINDOW_DAYS} days${owed > 0 ? ` · ${money(owed)} outstanding` : ""}</div>
+        </div>
+        <button class="rem-close" id="remClose" aria-label="Close">&times;</button>
+      </div>
+
+      ${overdue.length ? `
+        <div class="rem-section">
+          <div class="rem-section-title">⚠️ Overdue invoices</div>
+          ${overdue.map(i => `
+            <button class="rem-row overdue" data-rem-invoice="${i.id}">
+              <div class="rem-row-main">
+                <div class="rem-row-title">${escapeHtml(i.number)} · ${escapeHtml(clientName(i.clientId))}</div>
+                <div class="rem-row-meta">Due ${fmtDate(i.dueDate)}</div>
+              </div>
+              <span class="rem-chip overdue">${money(invBalance(i))}</span>
+            </button>`).join("")}
+        </div>` : ""}
+
+      <div class="rem-section">
+        <div class="rem-section-title">Upcoming gigs</div>
+        ${list.length ? list.map(({ ev, pay }) => `
+          <button class="rem-row" data-rem-event="${ev.id}">
+            <div class="rem-when">
+              <div class="rem-when-day">${parseISO(ev.date).toLocaleDateString("en-US", { day: "numeric" })}</div>
+              <div class="rem-when-mon">${parseISO(ev.date).toLocaleDateString("en-US", { month: "short" })}</div>
+            </div>
+            <div class="rem-row-main">
+              <div class="rem-row-title">${escapeHtml(ev.title)}</div>
+              <div class="rem-row-meta">${relativeDay(ev.date)}${ev.startTime ? " · " + fmtTime(ev.startTime) : ""} · ${escapeHtml(clientName(ev.clientId))}</div>
+            </div>
+            <span class="rem-chip ${pay.kind}">${pay.label}</span>
+          </button>`).join("")
+        : `<div class="rem-empty">Nothing booked in the next ${REMINDER_WINDOW_DAYS} days.</div>`}
+      </div>`;
+
+    $("#remClose", panel).addEventListener("click", closeReminders);
+    $$("[data-rem-event]", panel).forEach(el => el.addEventListener("click", () => {
+      closeReminders();
+      openEventDetail(el.dataset.remEvent);
+    }));
+    $$("[data-rem-invoice]", panel).forEach(el => el.addEventListener("click", () => {
+      closeReminders();
+      openInvoiceDetail(el.dataset.remInvoice);
+    }));
+  }
+
+  function openReminders() {
+    renderReminders();
+    $("#remindersPanel").classList.remove("hidden");
+    $("#remindersBackdrop").classList.remove("hidden");
+    $("#remindersBtn").setAttribute("aria-expanded", "true");
+  }
+
+  function closeReminders() {
+    $("#remindersPanel").classList.add("hidden");
+    $("#remindersBackdrop").classList.add("hidden");
+    $("#remindersBtn").setAttribute("aria-expanded", "false");
+  }
+
+  function remindersOpen() {
+    return !$("#remindersPanel").classList.contains("hidden");
+  }
+
+  $("#remindersBtn").addEventListener("click", () => remindersOpen() ? closeReminders() : openReminders());
+  $("#remindersBackdrop").addEventListener("click", closeReminders);
 
   /* ================= WHAT'S NEW (release notes) =================
      Entries live in updates.json next to the app, so publishing an
