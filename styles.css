@@ -747,3 +747,7 @@ tr.row-hotel td.hotel-label { font-weight: 700; color: #e85d26; font-size: 13px;
 }
 
 @media print { .reminders-fab, .reminders-panel, .reminders-backdrop { display: none !important; } }
+
+/* ---------- Multi-day gigs ---------- */
+.cal-event.continues { opacity: 0.72; font-weight: 500; }
+.field-hint { font-weight: 400; text-transform: none; letter-spacing: 0; opacity: 0.75; }

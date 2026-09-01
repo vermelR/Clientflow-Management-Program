@@ -205,6 +205,37 @@
     return parseISO(iso).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
   }
 
+  // A gig can run over several days; everything that asks "is this over?"
+  // should look at the last day, not the first.
+  function eventEnd(e) {
+    return e.endDate && e.endDate > e.date ? e.endDate : e.date;
+  }
+  function isMultiDay(e) { return eventEnd(e) !== e.date; }
+
+  function fmtDateRange(start, end) {
+    if (!end || end <= start) return fmtDate(start);
+    const a = parseISO(start), b = parseISO(end);
+    const sameYear = a.getFullYear() === b.getFullYear();
+    const sameMonth = sameYear && a.getMonth() === b.getMonth();
+    if (sameMonth) {
+      return `${a.toLocaleDateString("en-US", { month: "short", day: "numeric" })}–${b.getDate()}, ${b.getFullYear()}`;
+    }
+    const left = a.toLocaleDateString("en-US", sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+    return `${left} – ${fmtDate(end)}`;
+  }
+
+  // Every date a gig occupies, so multi-day bookings fill the calendar.
+  function eventDays(e) {
+    const days = [e.date];
+    let cursor = e.date;
+    const last = eventEnd(e);
+    while (cursor < last && days.length < 60) {
+      cursor = addDaysISO(cursor, 1);
+      days.push(cursor);
+    }
+    return days;
+  }
+
   function fmtTime(t) {
     if (!t) return "";
     const [h, m] = t.split(":").map(Number);
@@ -361,7 +392,7 @@
     const year = new Date().getFullYear();
 
     const upcoming = state.events
-      .filter(e => e.date >= today && e.status !== "cancelled" && e.status !== "completed")
+      .filter(e => eventEnd(e) >= today && e.status !== "cancelled" && e.status !== "completed")
       .sort((a, b) => a.date.localeCompare(b.date));
 
     // Money actually received this year, deposits included.
@@ -438,7 +469,7 @@
             <tbody>
               ${upcoming.slice(0, 6).map(e => `
                 <tr class="clickable" data-open-event="${e.id}">
-                  <td class="nowrap">${fmtDateShort(e.date)}${e.startTime ? `<span class="sub">${fmtTime(e.startTime)}</span>` : ""}</td>
+                  <td class="nowrap">${fmtDateShort(e.date)}${isMultiDay(e) ? `<span class="sub">through ${fmtDateShort(eventEnd(e))}</span>` : e.startTime ? `<span class="sub">${fmtTime(e.startTime)}</span>` : ""}</td>
                   <td>${escapeHtml(e.title)}<span class="sub">${escapeHtml(e.venue || "")}</span></td>
                   <td>${escapeHtml(clientName(e.clientId))}</td>
                   <td>${badge(e.status)}</td>
@@ -607,7 +638,7 @@
       <div class="section-label">Gigs (${gigs.length})</div>
       ${gigs.length ? `<div class="table-wrap"><table><tbody>
         ${gigs.map(e => `<tr class="clickable" data-open-event="${e.id}">
-          <td class="nowrap">${fmtDate(e.date)}</td><td>${escapeHtml(e.title)}</td><td>${badge(e.status)}</td>
+          <td class="nowrap">${escapeHtml(fmtDateRange(e.date, eventEnd(e)))}</td><td>${escapeHtml(e.title)}</td><td>${badge(e.status)}</td>
         </tr>`).join("")}
       </tbody></table></div>` : `<div class="notes-box">No gigs yet for this client.</div>`}
 
@@ -645,8 +676,8 @@
   function renderEvents(root) {
     const today = todayISO();
     let list = [...state.events];
-    if (eventFilter === "upcoming") list = list.filter(e => e.date >= today && e.status !== "cancelled");
-    else if (eventFilter === "past") list = list.filter(e => e.date < today);
+    if (eventFilter === "upcoming") list = list.filter(e => eventEnd(e) >= today && e.status !== "cancelled");
+    else if (eventFilter === "past") list = list.filter(e => eventEnd(e) < today);
     else if (eventFilter !== "all") list = list.filter(e => e.status === eventFilter);
     list.sort((a, b) => eventFilter === "past" ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date));
 
@@ -676,7 +707,7 @@
           <tbody>
             ${list.map(e => `
               <tr class="clickable" data-open-event="${e.id}">
-                <td class="nowrap">${fmtDateShort(e.date)}${e.startTime ? `<span class="sub">${fmtTime(e.startTime)}${e.endTime ? " – " + fmtTime(e.endTime) : ""}</span>` : ""}</td>
+                <td class="nowrap">${isMultiDay(e) ? escapeHtml(fmtDateRange(e.date, eventEnd(e))) : fmtDateShort(e.date)}${e.startTime ? `<span class="sub">${fmtTime(e.startTime)}${e.endTime ? " – " + fmtTime(e.endTime) : ""}</span>` : ""}</td>
                 <td><strong>${escapeHtml(e.title)}</strong><span class="sub">${escapeHtml(e.type || "")}</span></td>
                 <td>${escapeHtml(clientName(e.clientId))}</td>
                 <td>${escapeHtml(e.venue || "—")}</td>
@@ -759,6 +790,9 @@
             <select name="type">${EVENT_TYPES.map(t => `<option ${selectedType === t ? "selected" : ""}>${t}</option>`).join("")}</select>
           </div>
           <div class="field"><label>Date *</label><input name="date" type="date" required value="${escapeHtml(val("date", todayISO()))}"></div>
+          <div class="field"><label>End date <span class="field-hint">multi-day events only</span></label>
+            <input name="endDate" type="date" value="${escapeHtml(val("endDate"))}">
+          </div>
           <div class="field"><label>Status</label>
             <select name="status">
               ${["inquiry", "booked", "completed", "cancelled"].map(s => `<option value="${s}" ${selectedStatus === s ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("")}
@@ -790,6 +824,11 @@
       e.preventDefault();
       const data = Object.fromEntries(new FormData(e.target).entries());
       data.fee = data.fee ? Number(data.fee) : "";
+      if (data.endDate && data.endDate < data.date) {
+        toast("The end date can't be before the start date");
+        return;
+      }
+      if (data.endDate === data.date) data.endDate = "";   // single day
       if (ev) Object.assign(ev, data);
       else state.events.push({ id: uid(), ...data });
       save(); closeModal(); render();
@@ -806,7 +845,7 @@
     openModal(modalShell(e.title, `
       <div style="margin-bottom:14px">${badge(e.status)}</div>
       <div class="detail-grid">
-        <div class="detail-item"><div class="lbl">Date</div><div class="val">${fmtDateShort(e.date)}</div></div>
+        <div class="detail-item"><div class="lbl">Date${isMultiDay(e) ? "s" : ""}</div><div class="val">${isMultiDay(e) ? escapeHtml(fmtDateRange(e.date, eventEnd(e))) : fmtDateShort(e.date)}</div></div>
         <div class="detail-item"><div class="lbl">Time</div><div class="val">${e.startTime ? fmtTime(e.startTime) + (e.endTime ? " – " + fmtTime(e.endTime) : "") : "—"}</div></div>
         <div class="detail-item"><div class="lbl">Type</div><div class="val">${escapeHtml(e.type || "—")}</div></div>
         <div class="detail-item"><div class="lbl">Client</div><div class="val">${c ? `<a href="#" data-open-client="${c.id}">${escapeHtml(c.name)}</a>` : "—"}</div></div>
@@ -1697,6 +1736,45 @@
     }
   }
 
+  // Google's own wording for these failures names the fix (often with a
+  // link), so show it in full rather than truncating it into a toast.
+  function showGoogleProblem(err, api) {
+    const msg = err.message || "Something went wrong.";
+    const url = (msg.match(/https?:\/\/\S+/) || [])[0];
+    const body = url ? msg.replace(url, "").replace(/\s*\.\s*$/, "") : msg;
+
+    openModal(modalShell(`${api} isn't set up yet`, `
+      <p class="settings-note" style="margin-bottom:14px">${escapeHtml(body)}</p>
+      ${url ? `<p class="settings-note"><a href="${escapeHtml(url.replace(/[.,)]+$/, ""))}" target="_blank" rel="noopener">Open the Google Cloud page to fix it →</a></p>` : ""}
+      ${err.setupNeeded ? `
+        <div class="notes-box" style="margin-top:12px">
+          <strong>The usual checklist</strong><br>
+          1. Enable the <strong>${escapeHtml(api)} API</strong> in the Google Cloud project behind your Firebase app.<br>
+          2. Add the ${api === "Gmail" ? "<code>gmail.send</code>" : "<code>calendar.events.readonly</code>"} scope on the <strong>OAuth consent screen</strong>.<br>
+          3. While the app is unverified, add yourself under <strong>Test users</strong>.<br>
+          4. Come back here and hit send again.
+        </div>` : ""}
+      ${err.needsConsent ? `
+        <div class="notes-box" style="margin-top:12px">
+          Tick every permission box on the Google screen — unticking the ${api === "Gmail" ? "sending" : "calendar"} one leaves the app without access.
+        </div>` : ""}
+      <div class="modal-actions">
+        <button class="btn" id="googleProblemClose">Close</button>
+        <button class="btn btn-primary" id="googleProblemRetry">Try again</button>
+      </div>`));
+
+    $("#googleProblemClose").addEventListener("click", closeModal);
+    $("#googleProblemRetry").addEventListener("click", async () => {
+      closeModal();
+      try {
+        await ensureGoogleScope(api === "Gmail" ? GMAIL_SCOPE : CALENDAR_SCOPE);
+        toast("Connected — try sending again");
+      } catch (e) {
+        toast(e.message || "Still not connected");
+      }
+    });
+  }
+
   /* ---------- Gmail integration (Google Identity Services) ---------- */
 
   let gmailToken = null;
@@ -1779,17 +1857,40 @@
 
     const cred = GoogleAuthProvider.credentialFromResult(result);
     if (!cred?.accessToken) {
-      throw new Error("Google didn't grant Gmail access — try again and allow the sending permission.");
+      throw new Error("Google didn't return access for your account — try again.");
     }
+
+    // Record what Google actually granted, not what we asked for. A
+    // permission the user unticks (or that isn't on the consent screen)
+    // would otherwise look enabled here and fail on every send.
+    const granted = await grantedScopesFor(cred.accessToken, scopes);
+    const missing = scopes.filter(s => !granted.includes(s));
+    if (missing.length) {
+      const what = missing.includes(GMAIL_SCOPE) ? "send email" : "read your calendar";
+      throw new Error(`Google didn't grant permission to ${what}. Try again and leave that checkbox ticked — if it never appears, the scope still needs adding to your OAuth consent screen.`);
+    }
+
     gmailToken = {
       token: cred.accessToken,
       // Google's tokens last an hour; refresh a little early.
       expiresAt: Date.now() + 3500 * 1000,
       via: "account",
-      scopes,
+      scopes: granted,
       email: result.user?.email || user.email || "",
     };
     try { sessionStorage.setItem(GMAIL_TOKEN_KEY, JSON.stringify(gmailToken)); } catch { /* ignore */ }
+  }
+
+  // Google will tell us exactly which scopes a token carries.
+  async function grantedScopesFor(accessToken, requested) {
+    try {
+      const res = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`);
+      if (!res.ok) return requested;             // can't verify — don't block the user
+      const info = await res.json();
+      return String(info.scope || "").split(/\s+/).filter(Boolean);
+    } catch {
+      return requested;
+    }
   }
 
   async function connectGmail() {
@@ -1943,17 +2044,42 @@
       headers: { Authorization: `Bearer ${gmailToken.token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ raw }),
     });
-    if (res.status === 401 || res.status === 403) {
+    if (!res.ok) throw await googleApiError(res, "Gmail");
+  }
+
+  // Turns a Google API failure into something actionable. Only a 401 is
+  // worth re-authenticating for; a 403 means the project or the consent
+  // is wrong, and popping the sign-in window again just loops.
+  async function googleApiError(res, api) {
+    let payload = {};
+    try { payload = await res.json(); } catch { /* no body */ }
+    const gerr = payload.error || {};
+    const detail = gerr.message || "";
+    const reason = (gerr.errors?.[0]?.reason || gerr.status || "").toLowerCase();
+
+    if (res.status === 401) {
       disconnectGmail();
-      const err = new Error("Gmail session expired — reconnecting…");
-      err.expired = true;   // the caller renews the token and retries
-      throw err;
+      const err = new Error("Google sign-in expired — reconnecting…");
+      err.expired = true;          // caller renews the token and retries once
+      return err;
     }
-    if (!res.ok) {
-      let msg = `Gmail error (${res.status})`;
-      try { msg = (await res.json()).error?.message || msg; } catch { /* ignore */ }
-      throw new Error(msg);
+
+    if (res.status === 403) {
+      if (/has not been used in project|is disabled|accessnotconfigured/i.test(detail + reason)) {
+        const err = new Error(`The ${api} API isn't enabled on your Google Cloud project yet. ${detail}`);
+        err.setupNeeded = true;
+        return err;
+      }
+      if (/insufficient|scope|permission/i.test(detail + reason)) {
+        disconnectGmail();       // the grant is genuinely missing, so start over
+        const err = new Error(`Google didn't grant permission to use ${api}. Reconnect and make sure the permission checkbox stays ticked.`);
+        err.needsConsent = true;
+        return err;
+      }
+      return new Error(detail || `${api} refused the request (403).`);
     }
+
+    return new Error(detail || `${api} error (${res.status}).`);
   }
 
   async function sendInvoiceViaGmail(inv, id) {
@@ -1987,7 +2113,8 @@
       openInvoiceDetail(id);
     } catch (err) {
       console.warn(err);
-      toast(err.message || "Could not send via Gmail");
+      if (err?.setupNeeded || err?.needsConsent) showGoogleProblem(err, "Gmail");
+      else toast(err.message || "Could not send via Gmail");
     }
   }
 
@@ -2008,9 +2135,13 @@
       cells.push({ iso, day: dt.getDate(), other: dt.getMonth() !== m });
     }
 
+    // Multi-day gigs occupy every day they run, flagged so the later
+    // days read as a continuation rather than a second booking.
     const eventsByDate = {};
     state.events.forEach(e => {
-      (eventsByDate[e.date] = eventsByDate[e.date] || []).push(e);
+      eventDays(e).forEach((iso, i) => {
+        (eventsByDate[iso] = eventsByDate[iso] || []).push({ ev: e, continues: i > 0 });
+      });
     });
 
     // Booked calls come from Google Calendar, which is where Calendly
@@ -2050,9 +2181,10 @@
           ${cells.map(cell => `
             <div class="cal-cell ${cell.other ? "other-month" : ""} ${cell.iso === today ? "today" : ""}">
               <div class="cal-daynum">${cell.day}</div>
-              ${(eventsByDate[cell.iso] || []).map(e => `
-                <div class="cal-event status-${e.status}" data-open-event="${e.id}" title="${escapeHtml(e.title)} — ${escapeHtml(clientName(e.clientId))}">
-                  ${e.startTime ? fmtTime(e.startTime).replace(" ", "") + " " : ""}${escapeHtml(e.title)}
+              ${(eventsByDate[cell.iso] || []).map(({ ev: e, continues }) => `
+                <div class="cal-event status-${e.status}${continues ? " continues" : ""}" data-open-event="${e.id}"
+                     title="${escapeHtml(e.title)} — ${escapeHtml(clientName(e.clientId))}${isMultiDay(e) ? ` (${fmtDateRange(e.date, eventEnd(e))})` : ""}">
+                  ${continues ? "↳ " : e.startTime ? fmtTime(e.startTime).replace(" ", "") + " " : ""}${escapeHtml(e.title)}
                 </div>`).join("")}
               ${(googleByDate[cell.iso] || []).map((e, i) => `
                 <div class="cal-event gcal-event${e.fromCalendly ? " is-call" : ""}" data-gcal="${cell.iso}|${i}" title="${escapeHtml(e.title)}${e.startTime ? " · " + fmtTime(e.startTime) : ""}">
@@ -2097,7 +2229,7 @@
       <div style="margin-bottom:12px"><span class="badge badge-sent">From Google Calendar</span>
         ${e.fromCalendly ? `<span class="badge badge-booked" style="margin-left:6px">Calendly booking</span>` : ""}</div>
       <div class="detail-grid">
-        <div class="detail-item"><div class="lbl">Date</div><div class="val">${fmtDateShort(e.date)}</div></div>
+        <div class="detail-item"><div class="lbl">Date${isMultiDay(e) ? "s" : ""}</div><div class="val">${isMultiDay(e) ? escapeHtml(fmtDateRange(e.date, eventEnd(e))) : fmtDateShort(e.date)}</div></div>
         <div class="detail-item"><div class="lbl">Time</div><div class="val">${e.allDay ? "All day" : fmtTime(e.startTime)}</div></div>
         ${e.location ? `<div class="detail-item"><div class="lbl">Where</div><div class="val">${escapeHtml(e.location)}</div></div>` : ""}
         ${guessedClient ? `<div class="detail-item"><div class="lbl">Client</div><div class="val">${escapeHtml(guessedClient.name)}</div></div>` : ""}
@@ -2628,7 +2760,7 @@ const firebaseConfig = {
     const today = todayISO();
     const end = addDaysISO(today, REMINDER_WINDOW_DAYS);
     return state.events
-      .filter(e => e.date >= today && e.date <= end && e.status !== "cancelled")
+      .filter(e => eventEnd(e) >= today && e.date <= end && e.status !== "cancelled")
       .sort((a, b) => a.date.localeCompare(b.date) || (a.startTime || "").localeCompare(b.startTime || ""))
       .map(e => ({ ev: e, pay: gigPaymentSummary(e) }));
   }
@@ -2979,17 +3111,15 @@ const firebaseConfig = {
     });
 
     let res = await run();
-    if (res.status === 401 || res.status === 403) {
+    if (res.status === 401) {
       // Token aged out mid-session: renew silently and try once more.
-      disconnectGmail();
-      await ensureGoogleScope(CALENDAR_SCOPE);
-      res = await run();
+      const first = await googleApiError(res, "Google Calendar");
+      if (first.expired) {
+        await ensureGoogleScope(CALENDAR_SCOPE);
+        res = await run();
+      }
     }
-    if (!res.ok) {
-      let msg = `Google Calendar error (${res.status})`;
-      try { msg = (await res.json()).error?.message || msg; } catch { /* ignore */ }
-      throw new Error(msg);
-    }
+    if (!res.ok) throw await googleApiError(res, "Google Calendar");
     const data = await res.json();
     return (data.items || [])
       .filter(it => it.status !== "cancelled")
