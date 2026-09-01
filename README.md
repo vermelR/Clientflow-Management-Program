@@ -20,7 +20,7 @@ Run it for yourself, or [host it for many DJs](#cloud-sync-and-multi-user-setup)
 
   Printed and emailed invoices show every payment received and the remaining balance, so a client who paid a deposit sees exactly what's still owed.
 - **Calendar** — month view of all your gigs, color-coded by status
-- **📅 Calendly scheduling** — paste your Calendly link in Settings and a **Schedule a call** button appears on every client and gig. It opens your booking page with the client's name and email already filled in (and the gig's details attached as a note), so a consultation is two clicks instead of an email thread. When they pick a time, the app offers to add the call to your ClientFlow calendar too. No API key or account connection needed — just the link.
+- **📅 Calendly scheduling** — paste your Calendly link in Settings and a **Send booking link** button appears on every client and gig. Email it to them (via Gmail or your mail app) or copy it to text over; their name and email are already filled in on the booking page, and a gig's details ride along as a note. *They* choose the time that suits them. Turn on **Show booked calls on your calendar** and whatever they pick appears on the Calendar page — see below.
 - **Settings & Backup** — your business details for invoice headers, default payment terms, and one-click JSON export/import so your data is never locked in
 
 ## 🚀 Getting started
@@ -59,6 +59,18 @@ Now every invoice has a **"Send via Gmail"** button that emails a beautifully fo
 </details>
 
 > Note: Gmail sign-in requires the site to be served over http(s) — it works on your GitHub Pages URL, not when opening `index.html` directly from disk. The "Email (mail app)" button works everywhere as a fallback.
+
+## Seeing booked calls on the Calendar page
+
+Once a client books, the time they picked shows up on the Calendar page — but only with this chain connected, because the app has no server to receive Calendly's webhooks:
+
+1. **In Calendly**, connect your Google Calendar (*Account → Calendar connections*) so confirmed bookings are written into it. Calendly does this by default for most accounts.
+2. **In ClientFlow**, sign in with that same Google account, then go to **Settings → Calendly → Show booked calls on your calendar** and tick the box. Google asks once for read-only calendar access.
+3. **In Google Cloud** (the project behind your Firebase app), enable the **Google Calendar API** and add the `calendar.events.readonly` scope to the OAuth consent screen.
+
+Booked calls then appear on the Calendar page in blue, alongside your gigs. Calendly bookings are flagged, and clicking one shows the details plus an **Add to ClientFlow** button that turns it into a proper gig linked to the client (matched by their email).
+
+The events are read-only — ClientFlow never writes to or changes your Google Calendar.
 
 ## Posting updates for your users
 

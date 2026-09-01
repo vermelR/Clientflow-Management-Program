@@ -59,6 +59,7 @@
       googleClientId: "",
       firebaseConfig: null,
       calendlyUrl: "",
+      showGoogleCalendar: false,
     };
   }
 
@@ -616,7 +617,7 @@
       </tbody></table></div>` : `<div class="notes-box">No invoices yet for this client.</div>`}
 
       <div class="modal-actions" style="flex-wrap:wrap">
-        <button class="btn" id="detailScheduleCall">📅 Schedule a call</button>
+        <button class="btn" id="detailScheduleCall">📅 Send booking link</button>
         <button class="btn" id="detailNewGig">+ Gig for this client</button>
         <button class="btn" id="detailUploadInv">📎 Add existing invoice</button>
         <button class="btn" id="detailNewInv">+ Invoice</button>
@@ -627,7 +628,7 @@
     $("#detailNewGig").addEventListener("click", () => openEventForm(null, id));
     $("#detailNewInv").addEventListener("click", () => openInvoiceForm(null, { clientId: id }));
     $("#detailUploadInv").addEventListener("click", () => openUploadInvoiceForm(null, { clientId: id }));
-    $("#detailScheduleCall").addEventListener("click", () => scheduleCall({ clientId: id }));
+    $("#detailScheduleCall").addEventListener("click", () => openBookingLinkModal({ clientId: id }));
     bindRowOpeners($("#modal"));
   }
 
@@ -697,6 +698,21 @@
     bindRowOpeners(root);
   }
 
+  // Gigs you'd still bill for. Completed ones are already wrapped up, so
+  // they're hidden — except the one an invoice is already linked to, which
+  // must stay selectable or editing would silently unlink it.
+  function invoiceableEvents(keepId) {
+    return [...state.events]
+      .filter(e => e.status !== "completed" || e.id === keepId)
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }
+
+  function gigOptions(selectedId) {
+    return `<option value="">— None —</option>` + invoiceableEvents(selectedId).map(e =>
+      `<option value="${e.id}" ${e.id === selectedId ? "selected" : ""}>${escapeHtml(e.title)} (${fmtDate(e.date)})${e.status === "completed" ? " — completed" : ""}</option>`
+    ).join("");
+  }
+
   function clientOptions(selectedId) {
     const opts = [...state.clients].sort((a, b) => a.name.localeCompare(b.name))
       .map(c => `<option value="${c.id}" ${c.id === selectedId ? "selected" : ""}>${escapeHtml(c.name)}</option>`);
@@ -728,9 +744,9 @@
               ${["inquiry", "booked", "completed", "cancelled"].map(s => `<option value="${s}" ${selectedStatus === s ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("")}
             </select>
           </div>
-          <div class="field"><label>Start time</label><input name="startTime" type="time" value="${escapeHtml(ev?.startTime || "")}"></div>
-          <div class="field"><label>End time</label><input name="endTime" type="time" value="${escapeHtml(ev?.endTime || "")}"></div>
-          <div class="field"><label>Venue</label><input name="venue" value="${escapeHtml(ev?.venue || "")}" placeholder="The Grand Ballroom"></div>
+          <div class="field"><label>Start time</label><input name="startTime" type="time" value="${escapeHtml(val("startTime"))}"></div>
+          <div class="field"><label>End time</label><input name="endTime" type="time" value="${escapeHtml(val("endTime"))}"></div>
+          <div class="field"><label>Venue</label><input name="venue" value="${escapeHtml(val("venue"))}" placeholder="The Grand Ballroom"></div>
           <div class="field"><label>Venue address</label><input name="address" value="${escapeHtml(ev?.address || "")}" placeholder="123 Main St"></div>
           <div class="field"><label>Guest count</label><input name="guestCount" type="number" min="0" value="${escapeHtml(ev?.guestCount || "")}"></div>
           <div class="field"><label>Performance fee</label><input name="fee" type="number" min="0" step="0.01" value="${escapeHtml(ev?.fee || "")}" placeholder="0.00"></div>
@@ -785,7 +801,7 @@
           <tr class="clickable" data-open-invoice="${i.id}"><td>${escapeHtml(i.number)}</td><td class="right">${money(invTotal(i))}</td><td>${badge(invStatus(i))}</td></tr>`).join("")}
         </tbody></table></div>` : ""}
       <div class="modal-actions" style="flex-wrap:wrap">
-        <button class="btn" id="evScheduleCall">📅 Schedule a call</button>
+        <button class="btn" id="evScheduleCall">📅 Send booking link</button>
         <button class="btn" id="evUploadInvoice">📎 Add existing invoice</button>
         <button class="btn" id="evInvoice">Create invoice for this gig</button>
         <button class="btn btn-primary" id="evEdit">Edit gig</button>
@@ -794,7 +810,7 @@
     $("#evEdit").addEventListener("click", () => openEventForm(id));
     $("#evInvoice").addEventListener("click", () => openInvoiceForm(null, { clientId: e.clientId, eventId: id }));
     $("#evUploadInvoice").addEventListener("click", () => openUploadInvoiceForm(null, { clientId: e.clientId, eventId: id }));
-    $("#evScheduleCall").addEventListener("click", () => scheduleCall({ clientId: e.clientId, eventId: id }));
+    $("#evScheduleCall").addEventListener("click", () => openBookingLinkModal({ clientId: e.clientId, eventId: id }));
     bindRowOpeners($("#modal"));
   }
 
@@ -922,11 +938,7 @@
           <div class="field"><label>Invoice #</label><input name="number" value="${escapeHtml(number)}"></div>
           <div class="field"><label>Client *</label><select name="clientId" required>${clientOptions(clientId)}</select></div>
           <div class="field"><label>Linked gig (optional)</label>
-            <select name="eventId">
-              <option value="">— None —</option>
-              ${[...state.events].sort((a, b) => b.date.localeCompare(a.date)).map(e =>
-                `<option value="${e.id}" ${e.id === eventId ? "selected" : ""}>${escapeHtml(e.title)} (${fmtDate(e.date)})</option>`).join("")}
-            </select>
+            <select name="eventId">${gigOptions(eventId)}</select>
           </div>
           <div class="field"><label>Status</label>
             <select name="status">
@@ -1179,11 +1191,7 @@
           </div>
           <div class="field"><label>Client *</label><select name="clientId" required>${clientOptions(clientId)}</select></div>
           <div class="field"><label>Linked gig (optional)</label>
-            <select name="eventId">
-              <option value="">— None —</option>
-              ${[...state.events].sort((a, b) => b.date.localeCompare(a.date)).map(e =>
-                `<option value="${e.id}" ${e.id === eventId ? "selected" : ""}>${escapeHtml(e.title)} (${fmtDate(e.date)})</option>`).join("")}
-            </select>
+            <select name="eventId">${gigOptions(eventId)}</select>
           </div>
           <div class="field"><label>Invoice total *</label>
             <input name="manualTotal" type="number" step="0.01" min="0" required value="${escapeHtml(presetTotal)}" placeholder="0.00">
@@ -1704,12 +1712,30 @@
   // Asks Google for permission to send mail on the *already signed-in*
   // account. Firebase hands back the OAuth access token from the popup,
   // which is exactly what the Gmail API wants.
-  async function connectGmailViaAccount() {
+  function grantedScopes() { return (gmailToken?.scopes) || []; }
+
+  function hasGoogleScope(scope) {
+    return gmailReady() && grantedScopes().includes(scope);
+  }
+
+  // Asks for a scope only if it isn't already granted, and always asks
+  // for the union so enabling a second feature can't revoke the first.
+  async function ensureGoogleScope(scope) {
+    if (hasGoogleScope(scope)) return;
+    if (!canUseAccountForGmail()) {
+      if (scope === GMAIL_SCOPE) return connectGmail();
+      throw new Error("Sign in with your Google account to use this.");
+    }
+    const wanted = [...new Set([...grantedScopes(), scope])];
+    return connectGmailViaAccount(wanted);
+  }
+
+  async function connectGmailViaAccount(scopes = [GMAIL_SCOPE]) {
     const { GoogleAuthProvider, linkWithPopup, reauthenticateWithPopup } = cloud.authMod;
     const user = cloud.auth.currentUser;
 
     const provider = new GoogleAuthProvider();
-    provider.addScope(GMAIL_SCOPE);
+    scopes.forEach(s => provider.addScope(s));
 
     const hasGoogle = (user.providerData || []).some(p => p.providerId === "google.com");
     let result;
@@ -1740,6 +1766,7 @@
       // Google's tokens last an hour; refresh a little early.
       expiresAt: Date.now() + 3500 * 1000,
       via: "account",
+      scopes,
       email: result.user?.email || user.email || "",
     };
     try { sessionStorage.setItem(GMAIL_TOKEN_KEY, JSON.stringify(gmailToken)); } catch { /* ignore */ }
@@ -1766,6 +1793,7 @@
           gmailToken = {
             token: resp.access_token,
             expiresAt: Date.now() + (Number(resp.expires_in) || 3600) * 1000,
+            scopes: [GMAIL_SCOPE],
           };
           try { sessionStorage.setItem(GMAIL_TOKEN_KEY, JSON.stringify(gmailToken)); } catch { /* ignore */ }
           resolve();
@@ -1912,9 +1940,9 @@
     const c = clientById(inv.clientId);
     if (!c?.email) { toast("This client has no email address on file"); return; }
     try {
-      if (!gmailReady()) {
+      if (!hasGoogleScope(GMAIL_SCOPE)) {
         toast("Connecting to Gmail…");
-        await connectGmail();
+        await ensureGoogleScope(GMAIL_SCOPE);
       }
       // An uploaded invoice goes out as the client's own PDF attachment.
       let attachment = null;
@@ -1930,7 +1958,7 @@
         // Tokens last an hour; renew and retry once so an expiry is
         // invisible rather than a failed send the user has to repeat.
         if (!err?.expired) throw err;
-        await connectGmail();
+        await ensureGoogleScope(GMAIL_SCOPE);
         await gmailSend(c.email, invoiceEmailSubject(inv), invoiceEmailHtml(inv), attachment);
       }
       if (inv.status !== "paid") inv.status = "sent";
@@ -1965,6 +1993,18 @@
       (eventsByDate[e.date] = eventsByDate[e.date] || []).push(e);
     });
 
+    // Booked calls come from Google Calendar, which is where Calendly
+    // puts them once a client picks a time.
+    const showGoogle = googleCalendarOn();
+    const monthKey = `${y}-${m}`;
+    if (showGoogle && gcal.monthKey !== monthKey && !gcal.loading) {
+      loadGoogleMonth(y, m, () => { if (currentView === "calendar") renderCalendar(root); });
+    }
+    const googleByDate = {};
+    if (showGoogle && gcal.monthKey === monthKey) {
+      gcal.events.forEach(e => { (googleByDate[e.date] = googleByDate[e.date] || []).push(e); });
+    }
+
     root.innerHTML = `
       <div class="view-header">
         <div>
@@ -1994,6 +2034,10 @@
                 <div class="cal-event status-${e.status}" data-open-event="${e.id}" title="${escapeHtml(e.title)} — ${escapeHtml(clientName(e.clientId))}">
                   ${e.startTime ? fmtTime(e.startTime).replace(" ", "") + " " : ""}${escapeHtml(e.title)}
                 </div>`).join("")}
+              ${(googleByDate[cell.iso] || []).map((e, i) => `
+                <div class="cal-event gcal-event${e.fromCalendly ? " is-call" : ""}" data-gcal="${cell.iso}|${i}" title="${escapeHtml(e.title)}${e.startTime ? " · " + fmtTime(e.startTime) : ""}">
+                  ${e.startTime ? fmtTime(e.startTime).replace(" ", "") + " " : ""}${escapeHtml(e.title)}
+                </div>`).join("")}
             </div>`).join("")}
         </div>
         <div class="cal-legend">
@@ -2001,14 +2045,58 @@
           <span><span class="legend-dot" style="background:var(--amber)"></span>Inquiry</span>
           <span><span class="legend-dot" style="background:var(--green)"></span>Completed</span>
           <span><span class="legend-dot" style="background:var(--muted)"></span>Cancelled</span>
+          ${showGoogle ? `<span><span class="legend-dot" style="background:#2f6fd0"></span>From Google Calendar${gcal.loading ? " (loading…)" : ""}</span>` : ""}
         </div>
+        ${showGoogle && gcal.error ? `<div class="cal-error">⚠️ ${escapeHtml(gcal.error)}</div>` : ""}
+        ${!showGoogle && calendlyLink() ? `<div class="cal-hint">
+          Want calls your clients book to appear here automatically?
+          <button class="linkish" id="calEnableGoogle">Turn on Google Calendar in Settings →</button>
+        </div>` : ""}
       </div>`;
 
     $("#calPrev", root).addEventListener("click", () => { calCursor = new Date(y, m - 1, 1); renderCalendar(root); });
     $("#calNext", root).addEventListener("click", () => { calCursor = new Date(y, m + 1, 1); renderCalendar(root); });
     $("#calToday", root).addEventListener("click", () => { calCursor = new Date(); renderCalendar(root); });
     $("#calAddEvent", root).addEventListener("click", () => openEventForm());
+    $("#calEnableGoogle", root)?.addEventListener("click", () => go("settings"));
+    $$("[data-gcal]", root).forEach(el => el.addEventListener("click", () => {
+      const [iso, idx] = el.dataset.gcal.split("|");
+      openGoogleEventDetail(googleByDate[iso]?.[Number(idx)]);
+    }));
     bindRowOpeners(root);
+  }
+
+  // Read-only view of something on the DJ's Google Calendar, with a way
+  // to pull it into ClientFlow as a proper gig if it matters.
+  function openGoogleEventDetail(e) {
+    if (!e) return;
+    const guessedClient = state.clients.find(c =>
+      c.email && e.attendees.some(a => a.toLowerCase() === c.email.toLowerCase()));
+
+    openModal(modalShell(e.title, `
+      <div style="margin-bottom:12px"><span class="badge badge-sent">From Google Calendar</span>
+        ${e.fromCalendly ? `<span class="badge badge-booked" style="margin-left:6px">Calendly booking</span>` : ""}</div>
+      <div class="detail-grid">
+        <div class="detail-item"><div class="lbl">Date</div><div class="val">${fmtDateShort(e.date)}</div></div>
+        <div class="detail-item"><div class="lbl">Time</div><div class="val">${e.allDay ? "All day" : fmtTime(e.startTime)}</div></div>
+        ${e.location ? `<div class="detail-item"><div class="lbl">Where</div><div class="val">${escapeHtml(e.location)}</div></div>` : ""}
+        ${guessedClient ? `<div class="detail-item"><div class="lbl">Client</div><div class="val">${escapeHtml(guessedClient.name)}</div></div>` : ""}
+        ${e.attendees.length ? `<div class="detail-item"><div class="lbl">Guests</div><div class="val">${escapeHtml(e.attendees.join(", "))}</div></div>` : ""}
+      </div>
+      ${e.description ? `<div class="section-label">Details</div><div class="notes-box">${escapeHtml(e.description).slice(0, 1200)}</div>` : ""}
+      <div class="modal-actions" style="flex-wrap:wrap">
+        ${e.link ? `<a class="btn" href="${escapeHtml(e.link)}" target="_blank" rel="noopener">Open in Google Calendar</a>` : ""}
+        ${state.clients.length ? `<button class="btn btn-primary" id="gcalToGig">Add to ClientFlow</button>` : ""}
+      </div>`), true);
+
+    $("#gcalToGig")?.addEventListener("click", () => openEventForm(null, guessedClient?.id, {
+      title: e.title,
+      type: "Client Call",
+      status: "booked",
+      date: e.date,
+      startTime: e.startTime,
+      notes: [e.location, e.description].filter(Boolean).join("\n").slice(0, 500),
+    }));
   }
 
   /* ================= SETTINGS ================= */
@@ -2074,7 +2162,24 @@
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:center">
           <button class="btn" id="saveCalendly">Save link</button>
           ${s.calendlyUrl ? `<button class="btn" id="testCalendly">Preview booking page</button>` : ""}
-          <span class="settings-note" style="margin:0">${s.calendlyUrl ? "✅ Connected" : "Not set up"}</span>
+          <span class="settings-note" style="margin:0">${s.calendlyUrl ? "✅ Ready to send" : "Not set up"}</span>
+        </div>
+
+        <div class="sub-setting">
+          <div class="card-title" style="margin-bottom:8px">Show booked calls on your calendar</div>
+          <p class="settings-note">
+            When a client books, Calendly puts the call in the Google Calendar it's connected to.
+            Turn this on and the Calendar page reads those bookings back, so the time
+            <em>they</em> chose shows up here — no need to copy it over by hand.
+            ${canUseAccountForGmail()
+              ? `Uses the Google account you're signed in with (${escapeHtml(cloud.user.email || "")}), read-only.`
+              : `<strong>Sign in with your Google account first</strong> — this reads your calendar through that account.`}
+          </p>
+          <label class="comp-toggle" style="font-size:13.5px">
+            <input type="checkbox" id="showGcal" ${s.showGoogleCalendar ? "checked" : ""} ${canUseAccountForGmail() ? "" : "disabled"}>
+            Show my Google Calendar events on the Calendar page
+          </label>
+          <div class="settings-note" id="gcalStatus" style="margin:10px 0 0"></div>
         </div>
       </div>
 
@@ -2160,7 +2265,35 @@
       renderSettings(root);
       toast(raw ? "Calendly link saved 📅" : "Calendly link cleared");
     });
-    $("#testCalendly", root)?.addEventListener("click", () => scheduleCall({}));
+    $("#testCalendly", root)?.addEventListener("click", () => window.open(calendlyLink(), "_blank", "noopener"));
+
+    $("#showGcal", root)?.addEventListener("change", async e => {
+      const on = e.target.checked;
+      const status = $("#gcalStatus", root);
+      if (!on) {
+        state.settings.showGoogleCalendar = false;
+        gcal = { monthKey: null, events: [], loading: false, error: "" };
+        save();
+        status.textContent = "";
+        toast("Google Calendar hidden");
+        return;
+      }
+      try {
+        status.textContent = "Asking Google for read access…";
+        await ensureGoogleScope(CALENDAR_SCOPE);
+        state.settings.showGoogleCalendar = true;
+        gcal = { monthKey: null, events: [], loading: false, error: "" };
+        save();
+        status.textContent = "✅ Connected — booked calls now show on your Calendar page";
+        toast("Google Calendar connected 🗓");
+      } catch (err) {
+        console.warn(err);
+        e.target.checked = false;
+        state.settings.showGoogleCalendar = false;
+        save();
+        status.textContent = "⚠️ " + (err.message || "Could not connect");
+      }
+    });
 
     $("#logoImgInput", root).addEventListener("change", e => {
       const file = e.target.files[0];
@@ -2518,40 +2651,16 @@ const firebaseConfig = {
     markUpdatesSeen();
   }
 
-  /* ================= CALENDLY (booking client calls) =================
-     Uses Calendly's embed widget, so there is no API key or server
-     involved: you paste your scheduling link once and every client's
-     name and email are filled in for them when the booking page opens. */
-
-  const CALENDLY_CSS = "https://assets.calendly.com/assets/external/widget.css";
-  const CALENDLY_JS = "https://assets.calendly.com/assets/external/widget.js";
-  let calendlyPromise = null;
-  let pendingCallContext = null;
+  /* ================= CALENDLY (send the client a booking link) =========
+     The client chooses their own time, so the app's job is to get a
+     personalised link to them. Whatever they book lands in the DJ's
+     Google Calendar (Calendly writes it there), which the Calendar
+     page then reads back — see the Google Calendar section below. */
 
   function calendlyLink() { return (state.settings.calendlyUrl || "").trim(); }
 
-  function loadCalendlyWidget() {
-    if (window.Calendly) return Promise.resolve();
-    if (calendlyPromise) return calendlyPromise;
-    calendlyPromise = new Promise((resolve, reject) => {
-      if (!document.getElementById("calendlyCss")) {
-        const link = document.createElement("link");
-        link.id = "calendlyCss";
-        link.rel = "stylesheet";
-        link.href = CALENDLY_CSS;
-        document.head.appendChild(link);
-      }
-      const sc = document.createElement("script");
-      sc.src = CALENDLY_JS;
-      sc.async = true;
-      sc.onload = () => resolve();
-      sc.onerror = () => { calendlyPromise = null; reject(new Error("Calendly could not be reached")); };
-      document.head.appendChild(sc);
-    });
-    return calendlyPromise;
-  }
-
-  // Calendly reads these query params to prefill its booking form.
+  // Calendly reads these query params to prefill its booking form, so
+  // the client doesn't retype details we already have.
   function calendlyPrefillUrl(base, { name, email, note } = {}) {
     let url;
     try { url = new URL(base); } catch { return base; }
@@ -2561,57 +2670,210 @@ const firebaseConfig = {
     return url.toString();
   }
 
-  async function scheduleCall({ clientId, eventId } = {}) {
-    const base = calendlyLink();
-    if (!base) {
-      toast("Add your Calendly link in Settings first");
-      closeModal();
-      go("settings");
-      return;
-    }
+  function bookingContext({ clientId, eventId } = {}) {
     const c = clientById(clientId);
     const ev = eventId ? eventById(eventId) : null;
     const note = ev
       ? `${ev.title} — ${fmtDate(ev.date)}${ev.venue ? " @ " + ev.venue : ""}`
       : c ? `Client: ${c.name}` : "";
-    const url = calendlyPrefillUrl(base, { name: c?.name, email: c?.email, note });
-
-    pendingCallContext = { clientId, eventId };
-    try {
-      await loadCalendlyWidget();
-      closeModal();
-      window.Calendly.initPopupWidget({ url });
-    } catch (e) {
-      // Offline, blocked, or an ad blocker: the plain link still works.
-      console.warn(e);
-      closeModal();
-      window.open(url, "_blank", "noopener");
-    }
+    return { c, ev, url: calendlyPrefillUrl(calendlyLink(), { name: c?.name, email: c?.email, note }) };
   }
 
-  // Calendly's embed tells the page when a booking completes, which is
-  // the moment to offer to put the call on the app's own calendar.
-  window.addEventListener("message", e => {
-    let host = "";
-    try { host = new URL(e.origin).hostname; } catch { return; }
-    if (host !== "calendly.com" && !host.endsWith(".calendly.com")) return;
-    if (e.data?.event !== "calendly.event_scheduled") return;
+  function bookingEmailSubject(ev) {
+    const s = state.settings;
+    return ev ? `Let's set up a call about ${ev.title}` : `Let's set up a call — ${s.businessName}`;
+  }
 
-    const ctx = pendingCallContext || {};
-    pendingCallContext = null;
-    const c = clientById(ctx.clientId);
-    toast("Call booked in Calendly 🗓");
-    setTimeout(() => {
-      try { window.Calendly?.closePopupWidget(); } catch { /* already closed */ }
-      if (!confirm("Booked! Add this call to your ClientFlow calendar too?")) return;
-      openEventForm(null, ctx.clientId, {
-        title: c ? `Call with ${c.name}` : "Client call",
-        type: "Client Call",
-        status: "booked",
-        notes: "Booked via Calendly.",
-      });
-    }, 400);
-  });
+  function bookingEmailText(c, ev, url) {
+    const s = state.settings;
+    return [
+      `Hi ${c ? c.name.split(" ")[0] : "there"},`,
+      ``,
+      ev
+        ? `Looking forward to ${ev.title}! Let's find a time to talk through the details.`
+        : `Let's find a time to talk.`,
+      ``,
+      `Pick whichever slot suits you best here:`,
+      url,
+      ``,
+      `Talk soon,`,
+      s.ownerName || s.businessName,
+      s.phone || "",
+    ].filter(l => l !== undefined).join("\n");
+  }
+
+  function bookingEmailHtml(c, ev, url) {
+    const s = state.settings;
+    return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#222;">
+      <div style="max-width:560px;margin:0 auto;background:#fff;padding:28px 32px;">
+        <div style="font-size:13px;color:#888;letter-spacing:1px;">${escapeHtml(s.businessName)}</div>
+        <p style="font-size:15px;line-height:1.6;">Hi ${escapeHtml(c ? c.name.split(" ")[0] : "there")},</p>
+        <p style="font-size:15px;line-height:1.6;">
+          ${ev ? `Looking forward to <strong>${escapeHtml(ev.title)}</strong>! Let's find a time to talk through the details.`
+               : "Let's find a time to talk."}
+        </p>
+        <p style="font-size:15px;line-height:1.6;">Pick whichever slot suits you best:</p>
+        <p style="margin:22px 0;">
+          <a href="${escapeHtml(url)}" style="background:#7c5cff;color:#fff;text-decoration:none;font-weight:bold;padding:13px 26px;border-radius:8px;display:inline-block;font-size:15px;">Choose a time</a>
+        </p>
+        <p style="font-size:12.5px;color:#777;line-height:1.6;">Or paste this into your browser:<br>
+          <a href="${escapeHtml(url)}" style="color:#7c5cff;">${escapeHtml(url)}</a>
+        </p>
+        <p style="font-size:14px;line-height:1.7;color:#444;margin-top:26px;">
+          Talk soon,<br><strong>${escapeHtml(s.ownerName || s.businessName)}</strong><br>${escapeHtml(s.phone || "")}
+        </p>
+      </div>
+    </body></html>`;
+  }
+
+  function openBookingLinkModal({ clientId, eventId } = {}) {
+    if (!calendlyLink()) {
+      toast("Add your Calendly link in Settings first");
+      closeModal();
+      go("settings");
+      return;
+    }
+    const { c, ev, url } = bookingContext({ clientId, eventId });
+    const gmailPossible = !!(c?.email && (canUseAccountForGmail() || state.settings.googleClientId));
+
+    openModal(modalShell("Send a booking link", `
+      <p class="settings-note">
+        ${c ? escapeHtml(c.name) : "Your client"} picks the time that works for them.
+        Their name${c?.email ? " and email are" : " is"} already filled in on the booking page,
+        and whatever they choose lands on your calendar.
+      </p>
+
+      <div class="field full">
+        <label>Their booking link</label>
+        <input id="bookingUrl" readonly value="${escapeHtml(url)}">
+      </div>
+
+      <div class="booking-actions">
+        <button class="btn" id="copyBookingLink">🔗 Copy link</button>
+        ${c?.email ? `<button class="btn" id="mailBookingLink">✉️ Email (mail app)</button>` : ""}
+        ${gmailPossible ? `<button class="btn btn-primary" id="gmailBookingLink">📨 Send via Gmail</button>` : ""}
+        <button class="btn" id="previewBookingLink">👁 Preview page</button>
+      </div>
+      ${!c?.email ? `<div class="gmail-hint">This client has no email on file — copy the link and text it to them, or add an email address first.</div>` : ""}`));
+
+    $("#copyBookingLink").addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(url);
+        toast("Booking link copied 🔗");
+      } catch {
+        // Clipboard permission denied: select it so it can be copied by hand.
+        const input = $("#bookingUrl");
+        input.focus();
+        input.select();
+        toast("Press Ctrl/Cmd+C to copy");
+      }
+    });
+
+    $("#previewBookingLink").addEventListener("click", () => window.open(url, "_blank", "noopener"));
+
+    $("#mailBookingLink")?.addEventListener("click", () => {
+      const href = `mailto:${encodeURIComponent(c.email)}?subject=${encodeURIComponent(bookingEmailSubject(ev))}&body=${encodeURIComponent(bookingEmailText(c, ev, url))}`;
+      window.location.href = href;
+      toast("Opening your mail app…");
+    });
+
+    $("#gmailBookingLink")?.addEventListener("click", async () => {
+      const btn = $("#gmailBookingLink");
+      btn.disabled = true;
+      try {
+        if (!hasGoogleScope(GMAIL_SCOPE)) { toast("Connecting to Gmail…"); await ensureGoogleScope(GMAIL_SCOPE); }
+        toast("Sending…");
+        try {
+          await gmailSend(c.email, bookingEmailSubject(ev), bookingEmailHtml(c, ev, url));
+        } catch (err) {
+          if (!err?.expired) throw err;
+          await ensureGoogleScope(GMAIL_SCOPE);
+          await gmailSend(c.email, bookingEmailSubject(ev), bookingEmailHtml(c, ev, url));
+        }
+        closeModal();
+        toast(`Booking link sent to ${c.email} 📅`);
+      } catch (err) {
+        console.warn(err);
+        btn.disabled = false;
+        toast(err.message || "Could not send — try the mail app instead");
+      }
+    });
+  }
+
+  /* ================= GOOGLE CALENDAR (booked calls, read-only) ========
+     Calendly writes confirmed bookings into the Google Calendar of the
+     account it's connected to. Reading that calendar back is how a time
+     the client chose on their own shows up here — no server needed. */
+
+  const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events.readonly";
+
+  let gcal = { monthKey: null, events: [], loading: false, error: "" };
+
+  function googleCalendarOn() {
+    return !!state.settings.showGoogleCalendar && canUseAccountForGmail();
+  }
+
+  async function fetchGoogleEvents(y, m) {
+    await ensureGoogleScope(CALENDAR_SCOPE);
+    const timeMin = new Date(y, m, 1).toISOString();
+    const timeMax = new Date(y, m + 1, 1).toISOString();
+    const params = new URLSearchParams({
+      timeMin, timeMax, singleEvents: "true", orderBy: "startTime", maxResults: "250",
+    });
+    const run = () => fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`, {
+      headers: { Authorization: `Bearer ${gmailToken.token}` },
+    });
+
+    let res = await run();
+    if (res.status === 401 || res.status === 403) {
+      // Token aged out mid-session: renew silently and try once more.
+      disconnectGmail();
+      await ensureGoogleScope(CALENDAR_SCOPE);
+      res = await run();
+    }
+    if (!res.ok) {
+      let msg = `Google Calendar error (${res.status})`;
+      try { msg = (await res.json()).error?.message || msg; } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    return (data.items || [])
+      .filter(it => it.status !== "cancelled")
+      .map(it => {
+        const startRaw = it.start?.dateTime || it.start?.date || "";
+        const allDay = !it.start?.dateTime;
+        const d = startRaw ? new Date(startRaw) : null;
+        return {
+          id: it.id,
+          title: it.summary || "(busy)",
+          date: d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` : "",
+          startTime: allDay || !d ? "" : `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`,
+          allDay,
+          link: it.htmlLink || "",
+          location: it.location || "",
+          description: it.description || "",
+          attendees: (it.attendees || []).map(a => a.email).filter(Boolean),
+          // Calendly stamps its bookings, which lets us flag them.
+          fromCalendly: /calendly/i.test(`${it.description || ""} ${it.location || ""} ${it.source?.url || ""}`),
+        };
+      })
+      .filter(e => e.date);
+  }
+
+  async function loadGoogleMonth(y, m, rerender) {
+    const key = `${y}-${m}`;
+    if (gcal.loading) return;
+    gcal = { ...gcal, monthKey: key, loading: true, error: "" };
+    rerender();
+    try {
+      const events = await fetchGoogleEvents(y, m);
+      gcal = { monthKey: key, events, loading: false, error: "" };
+    } catch (e) {
+      console.warn("Google Calendar load failed", e);
+      gcal = { monthKey: key, events: [], loading: false, error: e.message || "Could not load Google Calendar" };
+    }
+    rerender();
+  }
 
   /* ================= ATTACHMENTS (uploaded invoice PDFs) =================
      Files are cached in IndexedDB on the device and, when small enough,
