@@ -1693,7 +1693,62 @@
     return gsiPromise;
   }
 
+  const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+
+  // True when we can piggyback on the account the user already signed
+  // in with, instead of a second, separately-configured Google login.
+  function canUseAccountForGmail() {
+    return !!(cloud.auth?.currentUser && cloud.authMod);
+  }
+
+  // Asks Google for permission to send mail on the *already signed-in*
+  // account. Firebase hands back the OAuth access token from the popup,
+  // which is exactly what the Gmail API wants.
+  async function connectGmailViaAccount() {
+    const { GoogleAuthProvider, linkWithPopup, reauthenticateWithPopup } = cloud.authMod;
+    const user = cloud.auth.currentUser;
+
+    const provider = new GoogleAuthProvider();
+    provider.addScope(GMAIL_SCOPE);
+
+    const hasGoogle = (user.providerData || []).some(p => p.providerId === "google.com");
+    let result;
+    try {
+      // Already a Google account: re-auth to obtain a token with the
+      // new scope. Signed up with email/password: link Google to it.
+      result = hasGoogle
+        ? await reauthenticateWithPopup(user, provider)
+        : await linkWithPopup(user, provider);
+    } catch (e) {
+      if (e?.code === "auth/provider-already-linked") {
+        result = await reauthenticateWithPopup(user, provider);
+      } else if (e?.code === "auth/credential-already-in-use") {
+        throw new Error("That Google account is already used by another ClientFlow account.");
+      } else if (e?.code === "auth/user-mismatch") {
+        throw new Error("Pick the Google account you signed in with.");
+      } else {
+        throw new Error(authErrorMessage(e));
+      }
+    }
+
+    const cred = GoogleAuthProvider.credentialFromResult(result);
+    if (!cred?.accessToken) {
+      throw new Error("Google didn't grant Gmail access — try again and allow the sending permission.");
+    }
+    gmailToken = {
+      token: cred.accessToken,
+      // Google's tokens last an hour; refresh a little early.
+      expiresAt: Date.now() + 3500 * 1000,
+      via: "account",
+      email: result.user?.email || user.email || "",
+    };
+    try { sessionStorage.setItem(GMAIL_TOKEN_KEY, JSON.stringify(gmailToken)); } catch { /* ignore */ }
+  }
+
   async function connectGmail() {
+    // Preferred path: reuse the signed-in account, no extra setup.
+    if (canUseAccountForGmail()) return connectGmailViaAccount();
+
     const clientId = (state.settings.googleClientId || "").trim();
     if (!clientId) {
       throw new Error("Add your Google OAuth Client ID in Settings → Gmail first");
@@ -1842,7 +1897,9 @@
     });
     if (res.status === 401 || res.status === 403) {
       disconnectGmail();
-      throw new Error("Gmail session expired — click Send again to reconnect");
+      const err = new Error("Gmail session expired — reconnecting…");
+      err.expired = true;   // the caller renews the token and retries
+      throw err;
     }
     if (!res.ok) {
       let msg = `Gmail error (${res.status})`;
@@ -1867,7 +1924,15 @@
         attachment = rec;
       }
       toast(attachment ? "Sending with PDF…" : "Sending…");
-      await gmailSend(c.email, invoiceEmailSubject(inv), invoiceEmailHtml(inv), attachment);
+      try {
+        await gmailSend(c.email, invoiceEmailSubject(inv), invoiceEmailHtml(inv), attachment);
+      } catch (err) {
+        // Tokens last an hour; renew and retry once so an expiry is
+        // invisible rather than a failed send the user has to repeat.
+        if (!err?.expired) throw err;
+        await connectGmail();
+        await gmailSend(c.email, invoiceEmailSubject(inv), invoiceEmailHtml(inv), attachment);
+      }
       if (inv.status !== "paid") inv.status = "sent";
       save(); render();
       toast(`Invoice ${inv.number} emailed to ${c.email} 🎉`);
@@ -2015,24 +2080,42 @@
 
       <div class="card card-pad" style="max-width:720px;margin-top:20px">
         <div class="card-title">📨 Gmail — send invoices from the site</div>
-        <p class="settings-note">
-          Connect your Google account to email invoices to clients directly from this site (no mail app needed).
-          One-time setup: create a free OAuth Client ID in
-          <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a>
-          (see the README for a 5-minute walkthrough), paste it below, then hit Connect.
-        </p>
-        <div class="form-grid">
-          <div class="field full"><label>Google OAuth Client ID</label>
-            <input id="googleClientId" value="${escapeHtml(s.googleClientId)}" placeholder="1234567890-abc123.apps.googleusercontent.com">
+        ${canUseAccountForGmail() ? `
+          <p class="settings-note">
+            Email invoices to clients straight from here, sent from
+            <strong>${escapeHtml(cloud.user.email || "your Google account")}</strong> — the account you're already
+            signed in with. The first time you send, Google asks once for permission to send mail on your behalf;
+            after that it's automatic. ClientFlow only ever gets permission to <em>send</em> — never to read your inbox.
+          </p>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:4px;flex-wrap:wrap">
+            <button class="btn btn-primary" id="gmailConnect">${gmailReady() ? "Reconnect" : "Enable Gmail sending"}</button>
+            ${gmailReady() ? `<button class="btn" id="gmailDisconnect">Turn off</button>` : ""}
+            <span class="settings-note" id="gmailStatus" style="margin:0">
+              ${gmailReady()
+                ? `✅ Ready${gmailToken?.email ? " — sending as " + escapeHtml(gmailToken.email) : ""}`
+                : "Not enabled yet — you can also just hit Send on an invoice"}
+            </span>
+          </div>`
+        : `
+          <p class="settings-note">
+            Connect your Google account to email invoices to clients directly from this site (no mail app needed).
+            One-time setup: create a free OAuth Client ID in
+            <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a>
+            (see the README for a 5-minute walkthrough), paste it below, then hit Connect.
+            ${accountsMode() ? `<br><strong>Tip:</strong> sign in to your ClientFlow account and this step disappears — Gmail then uses that account.` : ""}
+          </p>
+          <div class="form-grid">
+            <div class="field full"><label>Google OAuth Client ID</label>
+              <input id="googleClientId" value="${escapeHtml(s.googleClientId)}" placeholder="1234567890-abc123.apps.googleusercontent.com">
+            </div>
           </div>
-        </div>
-        <div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap">
-          <button class="btn btn-primary" id="gmailConnect">${gmailReady() ? "Reconnect Gmail" : "Connect Gmail"}</button>
-          ${gmailReady() ? `<button class="btn" id="gmailDisconnect">Disconnect</button>` : ""}
-          <span class="settings-note" id="gmailStatus" style="margin:0">
-            ${gmailReady() ? "✅ Connected — you can send invoices via Gmail" : "Not connected"}
-          </span>
-        </div>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap">
+            <button class="btn btn-primary" id="gmailConnect">${gmailReady() ? "Reconnect Gmail" : "Connect Gmail"}</button>
+            ${gmailReady() ? `<button class="btn" id="gmailDisconnect">Disconnect</button>` : ""}
+            <span class="settings-note" id="gmailStatus" style="margin:0">
+              ${gmailReady() ? "✅ Connected — you can send invoices via Gmail" : "Not connected"}
+            </span>
+          </div>`}
       </div>
 
       <div class="card card-pad" style="max-width:720px;margin-top:20px">
@@ -2060,7 +2143,8 @@
       Object.assign(state.settings, data);
       // These live in their own cards but shouldn't be lost if someone
       // types them and hits the main Save button.
-      state.settings.googleClientId = $("#googleClientId", root).value.trim();
+      const cidEl = $("#googleClientId", root);   // absent when Gmail rides on the signed-in account
+      if (cidEl) state.settings.googleClientId = cidEl.value.trim();
       state.settings.calendlyUrl = $("#calendlyUrl", root).value.trim();
       save(); toast("Settings saved");
     });
@@ -2095,14 +2179,17 @@
     });
 
     $("#gmailConnect", root).addEventListener("click", async () => {
-      state.settings.googleClientId = $("#googleClientId", root).value.trim();
+      const cidEl = $("#googleClientId", root);   // absent when Gmail rides on the signed-in account
+      if (cidEl) state.settings.googleClientId = cidEl.value.trim();
       save();
       const status = $("#gmailStatus", root);
       try {
-        status.textContent = "Opening Google sign-in…";
+        status.textContent = canUseAccountForGmail()
+          ? "Asking Google for sending permission…"
+          : "Opening Google sign-in…";
         await connectGmail();
         status.textContent = "✅ Connected — you can send invoices via Gmail";
-        toast("Gmail connected 🎉");
+        toast("Gmail ready 🎉");
         renderSettings(root);
       } catch (err) {
         status.textContent = "⚠️ " + err.message;

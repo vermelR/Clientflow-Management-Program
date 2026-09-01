@@ -36,7 +36,14 @@ On first launch, click **"Load sample data"** to explore with realistic example 
 
 ## 📨 Gmail setup (send invoices from the site)
 
-The site can send invoice emails through your own Gmail account, right from your browser — no server involved. One-time setup (~5 minutes):
+**If cloud sync is on and you signed in with Google, there's nothing to set up.** Gmail sending uses the account you're already signed in with: the first time you hit *Send via Gmail*, Google asks once for permission to send mail on your behalf, and after that it just works. (Signed up with email and password? The same button links your Google account at that moment.) ClientFlow only ever requests permission to **send** — it can't read your inbox.
+
+Two things the app owner does once in the Firebase project's Google Cloud console for this to work: enable the **Gmail API**, and add the `gmail.send` scope on the **OAuth consent screen**. Because that scope is a sensitive one, Google limits an unverified app to 100 users until you submit it for verification — fine while you're testing with a handful of DJs, worth starting early if you plan to go wider.
+
+<details>
+<summary><strong>Standalone setup</strong> (only needed when you're not using accounts / cloud sync)</summary>
+
+One-time setup (~5 minutes):
 
 1. Go to [Google Cloud Console → APIs & Credentials](https://console.cloud.google.com/apis/credentials) and sign in with the Gmail account you send invoices from.
 2. Create a project (any name, e.g. "DJ ClientFlow").
@@ -48,6 +55,8 @@ The site can send invoice emails through your own Gmail account, right from your
 7. In DJ ClientFlow, open **Settings → Gmail**, paste the Client ID, click **Connect Gmail**, and approve the Google sign-in.
 
 Now every invoice has a **"Send via Gmail"** button that emails a beautifully formatted invoice straight to the client and marks it as sent. The connection only asks for permission to *send* email (`gmail.send`) — it can't read your inbox. Sign-in lasts for the browser session; you'll be asked to re-approve occasionally.
+
+</details>
 
 > Note: Gmail sign-in requires the site to be served over http(s) — it works on your GitHub Pages URL, not when opening `index.html` directly from disk. The "Email (mail app)" button works everywhere as a fallback.
 
