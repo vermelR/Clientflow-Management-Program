@@ -698,18 +698,34 @@
     bindRowOpeners(root);
   }
 
-  // Gigs you'd still bill for. Completed ones are already wrapped up, so
-  // they're hidden — except the one an invoice is already linked to, which
-  // must stay selectable or editing would silently unlink it.
+  // A gig is done with only when it's been invoiced and every one of
+  // those invoices is paid off. No invoice yet, or a balance still
+  // owing, means there's more to bill.
+  function gigSettled(ev) {
+    const invs = state.invoices.filter(i => i.eventId === ev.id);
+    return invs.length > 0 && invs.every(i => invStatus(i) === "paid");
+  }
+
+  // Gigs you'd still bill for. Completed-and-paid ones drop off the list —
+  // except the one an invoice is already linked to, which must stay
+  // selectable or editing would silently unlink it.
   function invoiceableEvents(keepId) {
     return [...state.events]
-      .filter(e => e.status !== "completed" || e.id === keepId)
+      .filter(e => e.id === keepId || !(e.status === "completed" && gigSettled(e)))
       .sort((a, b) => b.date.localeCompare(a.date));
+  }
+
+  function gigNote(e) {
+    if (e.status !== "completed") return "";
+    if (gigSettled(e)) return " — completed &amp; paid";
+    return state.invoices.some(i => i.eventId === e.id)
+      ? " — completed, balance due"
+      : " — completed, not invoiced";
   }
 
   function gigOptions(selectedId) {
     return `<option value="">— None —</option>` + invoiceableEvents(selectedId).map(e =>
-      `<option value="${e.id}" ${e.id === selectedId ? "selected" : ""}>${escapeHtml(e.title)} (${fmtDate(e.date)})${e.status === "completed" ? " — completed" : ""}</option>`
+      `<option value="${e.id}" ${e.id === selectedId ? "selected" : ""}>${escapeHtml(e.title)} (${fmtDate(e.date)})${gigNote(e)}</option>`
     ).join("");
   }
 
