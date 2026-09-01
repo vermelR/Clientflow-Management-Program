@@ -387,6 +387,7 @@
         <div class="header-actions">
           <button class="btn" id="dashNewClient">+ Client</button>
           <button class="btn" id="dashNewEvent">+ Gig</button>
+          <button class="btn" id="dashUploadInvoice">📎 Add existing invoice</button>
           <button class="btn btn-primary" id="dashNewInvoice">+ Invoice</button>
         </div>
       </div>
@@ -460,6 +461,7 @@
     $("#dashNewClient", root).addEventListener("click", () => openClientForm());
     $("#dashNewEvent", root).addEventListener("click", () => openEventForm());
     $("#dashNewInvoice", root).addEventListener("click", () => openInvoiceForm());
+    $("#dashUploadInvoice", root).addEventListener("click", () => openUploadInvoiceForm());
     $("#loadSample", root)?.addEventListener("click", loadSampleData);
     $("#emptyAddClient", root)?.addEventListener("click", () => openClientForm());
     bindRowOpeners(root);
@@ -612,8 +614,9 @@
         </tr>`).join("")}
       </tbody></table></div>` : `<div class="notes-box">No invoices yet for this client.</div>`}
 
-      <div class="modal-actions">
+      <div class="modal-actions" style="flex-wrap:wrap">
         <button class="btn" id="detailNewGig">+ Gig for this client</button>
+        <button class="btn" id="detailUploadInv">📎 Add existing invoice</button>
         <button class="btn" id="detailNewInv">+ Invoice</button>
         <button class="btn btn-primary" id="detailEdit">Edit client</button>
       </div>`), true);
@@ -621,6 +624,7 @@
     $("#detailEdit").addEventListener("click", () => openClientForm(id));
     $("#detailNewGig").addEventListener("click", () => openEventForm(null, id));
     $("#detailNewInv").addEventListener("click", () => openInvoiceForm(null, { clientId: id }));
+    $("#detailUploadInv").addEventListener("click", () => openUploadInvoiceForm(null, { clientId: id }));
     bindRowOpeners($("#modal"));
   }
 
@@ -773,13 +777,15 @@
         <div class="table-wrap"><table><tbody>${invs.map(i => `
           <tr class="clickable" data-open-invoice="${i.id}"><td>${escapeHtml(i.number)}</td><td class="right">${money(invTotal(i))}</td><td>${badge(invStatus(i))}</td></tr>`).join("")}
         </tbody></table></div>` : ""}
-      <div class="modal-actions">
+      <div class="modal-actions" style="flex-wrap:wrap">
+        <button class="btn" id="evUploadInvoice">📎 Add existing invoice</button>
         <button class="btn" id="evInvoice">Create invoice for this gig</button>
         <button class="btn btn-primary" id="evEdit">Edit gig</button>
       </div>`), true);
 
     $("#evEdit").addEventListener("click", () => openEventForm(id));
     $("#evInvoice").addEventListener("click", () => openInvoiceForm(null, { clientId: e.clientId, eventId: id }));
+    $("#evUploadInvoice").addEventListener("click", () => openUploadInvoiceForm(null, { clientId: e.clientId, eventId: id }));
     bindRowOpeners($("#modal"));
   }
 
@@ -898,6 +904,10 @@
     }
 
     openModal(modalShell(inv ? `Edit invoice ${inv.number}` : "New invoice", `
+      ${inv ? "" : `<div class="switch-note">
+        Already have this invoice as a PDF?
+        <button type="button" class="linkish" id="switchToUpload">Upload it instead →</button>
+      </div>`}
       <form id="invoiceForm">
         <div class="form-grid">
           <div class="field"><label>Invoice #</label><input name="number" value="${escapeHtml(number)}"></div>
@@ -958,6 +968,12 @@
     const form = $("#invoiceForm");
     const groupsEl = $("#invGroups");
     const discountsEl = $("#invDiscounts");
+
+    // Carry whatever's already chosen over to the upload form.
+    $("#switchToUpload")?.addEventListener("click", () => openUploadInvoiceForm(null, {
+      clientId: form.clientId.value || clientId,
+      eventId: form.eventId.value || eventId,
+    }));
 
     function renderEditor() {
       groupsEl.innerHTML = draft.groups.map((g, gi) => `
@@ -1119,7 +1135,7 @@
 
   /* ---------- Upload an existing invoice (PDF) ---------- */
 
-  function openUploadInvoiceForm(id) {
+  function openUploadInvoiceForm(id, preset = {}) {
     const inv = id ? invoiceById(id) : null;
     if (!state.clients.length) {
       toast("Add a client first — invoices are billed to clients");
@@ -1128,6 +1144,10 @@
     }
     const s = state.settings;
     const issueDate = inv?.issueDate || todayISO();
+    const clientId = inv?.clientId || preset.clientId || "";
+    const eventId = inv?.eventId || preset.eventId || "";
+    // Coming from a gig, its fee is the most likely total.
+    const presetTotal = inv?.manualTotal ?? (preset.eventId ? eventById(preset.eventId)?.fee : "") ?? "";
 
     openModal(modalShell(inv ? `Edit ${inv.number}` : "Upload an existing invoice", `
       <form id="uploadInvForm">
@@ -1148,16 +1168,16 @@
           <div class="field"><label>Invoice #</label>
             <input name="number" value="${escapeHtml(inv?.number || s.invoicePrefix + String(s.nextInvoiceNumber).padStart(3, "0"))}">
           </div>
-          <div class="field"><label>Client *</label><select name="clientId" required>${clientOptions(inv?.clientId)}</select></div>
+          <div class="field"><label>Client *</label><select name="clientId" required>${clientOptions(clientId)}</select></div>
           <div class="field"><label>Linked gig (optional)</label>
             <select name="eventId">
               <option value="">— None —</option>
               ${[...state.events].sort((a, b) => b.date.localeCompare(a.date)).map(e =>
-                `<option value="${e.id}" ${e.id === inv?.eventId ? "selected" : ""}>${escapeHtml(e.title)} (${fmtDate(e.date)})</option>`).join("")}
+                `<option value="${e.id}" ${e.id === eventId ? "selected" : ""}>${escapeHtml(e.title)} (${fmtDate(e.date)})</option>`).join("")}
             </select>
           </div>
           <div class="field"><label>Invoice total *</label>
-            <input name="manualTotal" type="number" step="0.01" min="0" required value="${escapeHtml(inv?.manualTotal ?? "")}" placeholder="0.00">
+            <input name="manualTotal" type="number" step="0.01" min="0" required value="${escapeHtml(presetTotal)}" placeholder="0.00">
           </div>
           <div class="field"><label>Issue date</label><input name="issueDate" type="date" value="${escapeHtml(issueDate)}"></div>
           <div class="field"><label>Due date</label>
