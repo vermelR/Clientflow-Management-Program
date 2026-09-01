@@ -58,6 +58,7 @@
       hotelText,
       googleClientId: "",
       firebaseConfig: null,
+      calendlyUrl: "",
     };
   }
 
@@ -615,6 +616,7 @@
       </tbody></table></div>` : `<div class="notes-box">No invoices yet for this client.</div>`}
 
       <div class="modal-actions" style="flex-wrap:wrap">
+        <button class="btn" id="detailScheduleCall">📅 Schedule a call</button>
         <button class="btn" id="detailNewGig">+ Gig for this client</button>
         <button class="btn" id="detailUploadInv">📎 Add existing invoice</button>
         <button class="btn" id="detailNewInv">+ Invoice</button>
@@ -625,6 +627,7 @@
     $("#detailNewGig").addEventListener("click", () => openEventForm(null, id));
     $("#detailNewInv").addEventListener("click", () => openInvoiceForm(null, { clientId: id }));
     $("#detailUploadInv").addEventListener("click", () => openUploadInvoiceForm(null, { clientId: id }));
+    $("#detailScheduleCall").addEventListener("click", () => scheduleCall({ clientId: id }));
     bindRowOpeners($("#modal"));
   }
 
@@ -632,7 +635,7 @@
 
   let eventFilter = "upcoming";
 
-  const EVENT_TYPES = ["Wedding", "Sangeet", "Mehndi", "Baraat", "Reception", "Birthday", "Corporate", "Club Night", "School Dance", "Private Party", "Festival", "Other"];
+  const EVENT_TYPES = ["Wedding", "Sangeet", "Mehndi", "Baraat", "Reception", "Birthday", "Corporate", "Club Night", "School Dance", "Private Party", "Festival", "Client Call", "Other"];
 
   function renderEvents(root) {
     const today = todayISO();
@@ -700,25 +703,29 @@
     return `<option value="">— Select client —</option>` + opts.join("");
   }
 
-  function openEventForm(id, presetClientId) {
+  function openEventForm(id, presetClientId, preset = {}) {
     const ev = id ? eventById(id) : null;
     if (!state.clients.length) {
       toast("Add a client first — gigs are linked to clients");
       openClientForm();
       return;
     }
-    openModal(modalShell(ev ? "Edit gig" : "New gig", `
+    const val = (field, fallback = "") => ev?.[field] ?? preset[field] ?? fallback;
+    const selectedType = ev?.type ?? preset.type ?? "";
+    const selectedStatus = ev?.status ?? preset.status ?? "inquiry";
+
+    openModal(modalShell(ev ? "Edit gig" : preset.title ? "Add to your calendar" : "New gig", `
       <form id="eventForm">
         <div class="form-grid">
-          <div class="field full"><label>Event title *</label><input name="title" required value="${escapeHtml(ev?.title || "")}" placeholder="e.g. Johnson Wedding Reception"></div>
+          <div class="field full"><label>Event title *</label><input name="title" required value="${escapeHtml(val("title"))}" placeholder="e.g. Johnson Wedding Reception"></div>
           <div class="field"><label>Client *</label><select name="clientId" required>${clientOptions(ev?.clientId || presetClientId)}</select></div>
           <div class="field"><label>Event type</label>
-            <select name="type">${EVENT_TYPES.map(t => `<option ${ev?.type === t ? "selected" : ""}>${t}</option>`).join("")}</select>
+            <select name="type">${EVENT_TYPES.map(t => `<option ${selectedType === t ? "selected" : ""}>${t}</option>`).join("")}</select>
           </div>
-          <div class="field"><label>Date *</label><input name="date" type="date" required value="${escapeHtml(ev?.date || todayISO())}"></div>
+          <div class="field"><label>Date *</label><input name="date" type="date" required value="${escapeHtml(val("date", todayISO()))}"></div>
           <div class="field"><label>Status</label>
             <select name="status">
-              ${["inquiry", "booked", "completed", "cancelled"].map(s => `<option value="${s}" ${(ev?.status || "inquiry") === s ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("")}
+              ${["inquiry", "booked", "completed", "cancelled"].map(s => `<option value="${s}" ${selectedStatus === s ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("")}
             </select>
           </div>
           <div class="field"><label>Start time</label><input name="startTime" type="time" value="${escapeHtml(ev?.startTime || "")}"></div>
@@ -727,8 +734,8 @@
           <div class="field"><label>Venue address</label><input name="address" value="${escapeHtml(ev?.address || "")}" placeholder="123 Main St"></div>
           <div class="field"><label>Guest count</label><input name="guestCount" type="number" min="0" value="${escapeHtml(ev?.guestCount || "")}"></div>
           <div class="field"><label>Performance fee</label><input name="fee" type="number" min="0" step="0.01" value="${escapeHtml(ev?.fee || "")}" placeholder="0.00"></div>
-          <div class="field full"><label>Client needs &amp; requests</label><textarea name="needs" placeholder="Equipment, special songs, first dance, MC duties, uplighting…">${escapeHtml(ev?.needs || "")}</textarea></div>
-          <div class="field full"><label>Internal notes</label><textarea name="notes" placeholder="Load-in details, contact on site, parking…">${escapeHtml(ev?.notes || "")}</textarea></div>
+          <div class="field full"><label>Client needs &amp; requests</label><textarea name="needs" placeholder="Equipment, special songs, first dance, MC duties, uplighting…">${escapeHtml(val("needs"))}</textarea></div>
+          <div class="field full"><label>Internal notes</label><textarea name="notes" placeholder="Load-in details, contact on site, parking…">${escapeHtml(val("notes"))}</textarea></div>
         </div>
         <div class="modal-actions">
           ${ev ? `<button type="button" class="btn btn-danger" id="deleteEvent">Delete</button>` : ""}
@@ -778,6 +785,7 @@
           <tr class="clickable" data-open-invoice="${i.id}"><td>${escapeHtml(i.number)}</td><td class="right">${money(invTotal(i))}</td><td>${badge(invStatus(i))}</td></tr>`).join("")}
         </tbody></table></div>` : ""}
       <div class="modal-actions" style="flex-wrap:wrap">
+        <button class="btn" id="evScheduleCall">📅 Schedule a call</button>
         <button class="btn" id="evUploadInvoice">📎 Add existing invoice</button>
         <button class="btn" id="evInvoice">Create invoice for this gig</button>
         <button class="btn btn-primary" id="evEdit">Edit gig</button>
@@ -786,6 +794,7 @@
     $("#evEdit").addEventListener("click", () => openEventForm(id));
     $("#evInvoice").addEventListener("click", () => openInvoiceForm(null, { clientId: e.clientId, eventId: id }));
     $("#evUploadInvoice").addEventListener("click", () => openUploadInvoiceForm(null, { clientId: e.clientId, eventId: id }));
+    $("#evScheduleCall").addEventListener("click", () => scheduleCall({ clientId: e.clientId, eventId: id }));
     bindRowOpeners($("#modal"));
   }
 
@@ -1982,6 +1991,27 @@
       <div class="card card-pad" style="max-width:720px;margin-top:20px" id="cloudCard"></div>
 
       <div class="card card-pad" style="max-width:720px;margin-top:20px">
+        <div class="card-title">📅 Calendly — let clients book calls with you</div>
+        <p class="settings-note">
+          Paste your Calendly scheduling link and a <strong>Schedule a call</strong> button appears on every
+          client and gig. It opens your booking page with their name and email already filled in — and when
+          they pick a time, you can drop the call straight onto your ClientFlow calendar.
+          Your link looks like <code>https://calendly.com/your-name/30min</code>
+          (grab it from Calendly → Event Types → Copy link).
+        </p>
+        <div class="form-grid">
+          <div class="field full"><label>Your Calendly link</label>
+            <input id="calendlyUrl" value="${escapeHtml(s.calendlyUrl)}" placeholder="https://calendly.com/your-name/consultation">
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:center">
+          <button class="btn" id="saveCalendly">Save link</button>
+          ${s.calendlyUrl ? `<button class="btn" id="testCalendly">Preview booking page</button>` : ""}
+          <span class="settings-note" style="margin:0">${s.calendlyUrl ? "✅ Connected" : "Not set up"}</span>
+        </div>
+      </div>
+
+      <div class="card card-pad" style="max-width:720px;margin-top:20px">
         <div class="card-title">📨 Gmail — send invoices from the site</div>
         <p class="settings-note">
           Connect your Google account to email invoices to clients directly from this site (no mail app needed).
@@ -2025,9 +2055,25 @@
       data.nextInvoiceNumber = Number(data.nextInvoiceNumber) || 1;
       data.defaultDueDays = Number(data.defaultDueDays) || 14;
       Object.assign(state.settings, data);
+      // These live in their own cards but shouldn't be lost if someone
+      // types them and hits the main Save button.
       state.settings.googleClientId = $("#googleClientId", root).value.trim();
+      state.settings.calendlyUrl = $("#calendlyUrl", root).value.trim();
       save(); toast("Settings saved");
     });
+
+    $("#saveCalendly", root).addEventListener("click", () => {
+      const raw = $("#calendlyUrl", root).value.trim();
+      if (raw && !/^https:\/\/\S+\.\S+/.test(raw)) {
+        toast("That doesn't look like a link — paste the full https:// address");
+        return;
+      }
+      state.settings.calendlyUrl = raw;
+      save();
+      renderSettings(root);
+      toast(raw ? "Calendly link saved 📅" : "Calendly link cleared");
+    });
+    $("#testCalendly", root)?.addEventListener("click", () => scheduleCall({}));
 
     $("#logoImgInput", root).addEventListener("change", e => {
       const file = e.target.files[0];
@@ -2304,6 +2350,101 @@ const firebaseConfig = {
     save(); render();
     toast("Sample data loaded — explore away! 🎉");
   }
+
+  /* ================= CALENDLY (booking client calls) =================
+     Uses Calendly's embed widget, so there is no API key or server
+     involved: you paste your scheduling link once and every client's
+     name and email are filled in for them when the booking page opens. */
+
+  const CALENDLY_CSS = "https://assets.calendly.com/assets/external/widget.css";
+  const CALENDLY_JS = "https://assets.calendly.com/assets/external/widget.js";
+  let calendlyPromise = null;
+  let pendingCallContext = null;
+
+  function calendlyLink() { return (state.settings.calendlyUrl || "").trim(); }
+
+  function loadCalendlyWidget() {
+    if (window.Calendly) return Promise.resolve();
+    if (calendlyPromise) return calendlyPromise;
+    calendlyPromise = new Promise((resolve, reject) => {
+      if (!document.getElementById("calendlyCss")) {
+        const link = document.createElement("link");
+        link.id = "calendlyCss";
+        link.rel = "stylesheet";
+        link.href = CALENDLY_CSS;
+        document.head.appendChild(link);
+      }
+      const sc = document.createElement("script");
+      sc.src = CALENDLY_JS;
+      sc.async = true;
+      sc.onload = () => resolve();
+      sc.onerror = () => { calendlyPromise = null; reject(new Error("Calendly could not be reached")); };
+      document.head.appendChild(sc);
+    });
+    return calendlyPromise;
+  }
+
+  // Calendly reads these query params to prefill its booking form.
+  function calendlyPrefillUrl(base, { name, email, note } = {}) {
+    let url;
+    try { url = new URL(base); } catch { return base; }
+    if (name) url.searchParams.set("name", name);
+    if (email) url.searchParams.set("email", email);
+    if (note) url.searchParams.set("a1", note);
+    return url.toString();
+  }
+
+  async function scheduleCall({ clientId, eventId } = {}) {
+    const base = calendlyLink();
+    if (!base) {
+      toast("Add your Calendly link in Settings first");
+      closeModal();
+      go("settings");
+      return;
+    }
+    const c = clientById(clientId);
+    const ev = eventId ? eventById(eventId) : null;
+    const note = ev
+      ? `${ev.title} — ${fmtDate(ev.date)}${ev.venue ? " @ " + ev.venue : ""}`
+      : c ? `Client: ${c.name}` : "";
+    const url = calendlyPrefillUrl(base, { name: c?.name, email: c?.email, note });
+
+    pendingCallContext = { clientId, eventId };
+    try {
+      await loadCalendlyWidget();
+      closeModal();
+      window.Calendly.initPopupWidget({ url });
+    } catch (e) {
+      // Offline, blocked, or an ad blocker: the plain link still works.
+      console.warn(e);
+      closeModal();
+      window.open(url, "_blank", "noopener");
+    }
+  }
+
+  // Calendly's embed tells the page when a booking completes, which is
+  // the moment to offer to put the call on the app's own calendar.
+  window.addEventListener("message", e => {
+    let host = "";
+    try { host = new URL(e.origin).hostname; } catch { return; }
+    if (host !== "calendly.com" && !host.endsWith(".calendly.com")) return;
+    if (e.data?.event !== "calendly.event_scheduled") return;
+
+    const ctx = pendingCallContext || {};
+    pendingCallContext = null;
+    const c = clientById(ctx.clientId);
+    toast("Call booked in Calendly 🗓");
+    setTimeout(() => {
+      try { window.Calendly?.closePopupWidget(); } catch { /* already closed */ }
+      if (!confirm("Booked! Add this call to your ClientFlow calendar too?")) return;
+      openEventForm(null, ctx.clientId, {
+        title: c ? `Call with ${c.name}` : "Client call",
+        type: "Client Call",
+        status: "booked",
+        notes: "Booked via Calendly.",
+      });
+    }, 400);
+  });
 
   /* ================= ATTACHMENTS (uploaded invoice PDFs) =================
      Files are cached in IndexedDB on the device and, when small enough,

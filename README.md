@@ -20,6 +20,7 @@ Run it for yourself, or [host it for many DJs](#cloud-sync-and-multi-user-setup)
 
   Printed and emailed invoices show every payment received and the remaining balance, so a client who paid a deposit sees exactly what's still owed.
 - **Calendar** — month view of all your gigs, color-coded by status
+- **📅 Calendly scheduling** — paste your Calendly link in Settings and a **Schedule a call** button appears on every client and gig. It opens your booking page with the client's name and email already filled in (and the gig's details attached as a note), so a consultation is two clicks instead of an email thread. When they pick a time, the app offers to add the call to your ClientFlow calendar too. No API key or account connection needed — just the link.
 - **Settings & Backup** — your business details for invoice headers, default payment terms, and one-click JSON export/import so your data is never locked in
 
 ## 🚀 Getting started
