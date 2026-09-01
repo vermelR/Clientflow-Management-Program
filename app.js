@@ -1988,6 +1988,8 @@
         </form>
       </div>
 
+      <div class="card card-pad" style="max-width:720px;margin-top:20px" id="updatesCard"></div>
+
       <div class="card card-pad" style="max-width:720px;margin-top:20px" id="cloudCard"></div>
 
       <div class="card card-pad" style="max-width:720px;margin-top:20px">
@@ -2047,6 +2049,7 @@
       </div>`;
 
     renderCloudCard();
+    renderUpdatesCard();
 
     $("#settingsForm", root).addEventListener("submit", e => {
       e.preventDefault();
@@ -2349,6 +2352,83 @@ const firebaseConfig = {
 
     save(); render();
     toast("Sample data loaded — explore away! 🎉");
+  }
+
+  /* ================= WHAT'S NEW (release notes) =================
+     Entries live in updates.json next to the app, so publishing an
+     update is a file edit and a deploy — every user then sees it. */
+
+  const SEEN_UPDATE_KEY = "djclientflow.lastSeenUpdate";
+  let updatesCache = null;   // null = not loaded yet, array once fetched
+
+  async function fetchUpdates() {
+    if (updatesCache) return updatesCache;
+    // fetch() can't read file:// URLs, so don't try when the page was
+    // opened straight from disk — there is nothing to publish locally.
+    if (!location.protocol.startsWith("http")) {
+      updatesCache = [];
+      return updatesCache;
+    }
+    try {
+      // The service worker is network-first, so this picks up a fresh
+      // deploy immediately and falls back to the cached copy offline.
+      const res = await fetch("updates.json", { cache: "no-cache" });
+      if (!res.ok) throw new Error(`updates.json returned ${res.status}`);
+      const data = await res.json();
+      updatesCache = Array.isArray(data) ? data : (data.updates || []);
+    } catch (e) {
+      console.warn("Could not load updates.json", e);
+      updatesCache = [];
+    }
+    return updatesCache;
+  }
+
+  const updateKey = u => String(u.version || u.date || u.title || "");
+
+  async function refreshUpdatesBadge() {
+    const list = await fetchUpdates();
+    const dot = document.getElementById("updatesDot");
+    if (!dot) return;
+    const newest = list.length ? updateKey(list[0]) : "";
+    const unseen = newest && localStorage.getItem(SEEN_UPDATE_KEY) !== newest;
+    dot.classList.toggle("hidden", !unseen);
+  }
+
+  function markUpdatesSeen() {
+    if (updatesCache?.length) {
+      localStorage.setItem(SEEN_UPDATE_KEY, updateKey(updatesCache[0]));
+    }
+    document.getElementById("updatesDot")?.classList.add("hidden");
+  }
+
+  async function renderUpdatesCard() {
+    const card = document.getElementById("updatesCard");
+    if (!card) return;
+    const list = await fetchUpdates();
+    if (!document.getElementById("updatesCard")) return;   // navigated away
+
+    card.innerHTML = `
+      <div class="card-title">🆕 What's new</div>
+      ${list.length ? `
+        <p class="settings-note">Everything that's changed in ${escapeHtml(appInfo().productName)}, newest first.</p>
+        <ol class="update-list">
+          ${list.map(u => `
+            <li class="update-entry">
+              <div class="update-head">
+                ${u.version ? `<span class="update-version">${escapeHtml(u.version)}</span>` : ""}
+                ${u.title ? `<span class="update-title">${escapeHtml(u.title)}</span>` : ""}
+                ${u.date ? `<span class="update-date">${escapeHtml(fmtDate(u.date) === "—" ? u.date : fmtDate(u.date))}</span>` : ""}
+              </div>
+              ${Array.isArray(u.notes) && u.notes.length
+                ? `<ul class="update-notes">${u.notes.map(n => `<li>${escapeHtml(typeof n === "string" ? n : n.text || "")}</li>`).join("")}</ul>`
+                : ""}
+            </li>`).join("")}
+        </ol>`
+      : `<p class="settings-note" style="margin:0">
+           No updates posted yet. New features and fixes will show up here.
+         </p>`}`;
+
+    markUpdatesSeen();
   }
 
   /* ================= CALENDLY (booking client calls) =================
@@ -3128,4 +3208,5 @@ const firebaseConfig = {
   render();
   refreshCloudUi();
   initCloud();
+  refreshUpdatesBadge();
 })();

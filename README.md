@@ -51,6 +51,37 @@ Now every invoice has a **"Send via Gmail"** button that emails a beautifully fo
 
 > Note: Gmail sign-in requires the site to be served over http(s) — it works on your GitHub Pages URL, not when opening `index.html` directly from disk. The "Email (mail app)" button works everywhere as a fallback.
 
+## Posting updates for your users
+
+**Settings → What's new** shows release notes to everyone using your app. It reads [`updates.json`](updates.json), so publishing an update is: edit that file, commit, done — the next time anyone opens the app they see it, with a dot on the Settings tab until they've read it.
+
+The file starts empty (`{"updates": []}`). Add newest entries **first**:
+
+```json
+{
+  "updates": [
+    {
+      "version": "1.1",
+      "date": "2026-10-04",
+      "title": "Deposits and Calendly",
+      "notes": [
+        "Record deposits and partial payments on any invoice.",
+        "Book client calls straight from a client or gig.",
+        "Fixed: overdue invoices now clear once fully paid."
+      ]
+    },
+    {
+      "version": "1.0",
+      "date": "2026-09-20",
+      "title": "First release",
+      "notes": ["Clients, gigs, invoices and calendar."]
+    }
+  ]
+}
+```
+
+Every field is optional except keeping the shape — an entry can be just a `title` and `notes` if you'd rather not track version numbers. Text is plain text (no HTML), and the app escapes it, so anything you type is displayed exactly as written.
+
 ## Cloud sync and multi-user setup
 
 Out of the box the app saves to the browser it's opened in. Add a free Firebase project and it becomes a real multi-user product: everyone gets a login, their own private data, and automatic sync across every device they use.
