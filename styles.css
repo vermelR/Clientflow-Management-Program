@@ -24,6 +24,8 @@
   --blue: #3b7dd8;
   --blue-soft: #e6eefb;
   --gray-soft: #efece9;
+  --teal: #0f8f86;
+  --teal-soft: #dff3f1;
   --radius: 12px;
   --shadow: 0 1px 3px rgba(20, 15, 10, 0.08), 0 6px 18px rgba(20, 15, 10, 0.06);
 }
@@ -521,6 +523,9 @@ td .sub { display: block; font-size: 12px; color: var(--muted); margin-top: 2px;
 .cal-event.status-completed { background: var(--green-soft); color: var(--green); border-left-color: var(--green); }
 .cal-event.status-inquiry { background: var(--amber-soft); color: var(--amber); border-left-color: var(--amber); }
 .cal-event.status-cancelled { background: var(--gray-soft); color: var(--muted); border-left-color: var(--muted); text-decoration: line-through; }
+.cal-event.type-call {
+  background: var(--teal-soft); color: var(--teal); border-left-color: var(--teal);
+}
 .cal-legend { display: flex; gap: 16px; margin-top: 14px; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
 .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: middle; }
 

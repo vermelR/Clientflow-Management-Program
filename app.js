@@ -212,6 +212,10 @@
   }
   function isMultiDay(e) { return eventEnd(e) !== e.date; }
 
+  // Calls are colour-coded apart from paying gigs on the calendar, but a
+  // cancelled one should still read as cancelled.
+  function isCall(e) { return e.type === "Client Call" && e.status !== "cancelled"; }
+
   function fmtDateRange(start, end) {
     if (!end || end <= start) return fmtDate(start);
     const a = parseISO(start), b = parseISO(end);
@@ -2189,7 +2193,7 @@
             <div class="cal-cell ${cell.other ? "other-month" : ""} ${cell.iso === today ? "today" : ""}">
               <div class="cal-daynum">${cell.day}</div>
               ${(eventsByDate[cell.iso] || []).map(({ ev: e, continues }) => `
-                <div class="cal-event status-${e.status}${continues ? " continues" : ""}" data-open-event="${e.id}"
+                <div class="cal-event status-${e.status}${isCall(e) ? " type-call" : ""}${continues ? " continues" : ""}" data-open-event="${e.id}"
                      title="${escapeHtml(e.title)} — ${escapeHtml(clientName(e.clientId))}${isMultiDay(e) ? ` (${fmtDateRange(e.date, eventEnd(e))})` : ""}">
                   ${continues ? "↳ " : e.startTime ? fmtTime(e.startTime).replace(" ", "") + " " : ""}${escapeHtml(e.title)}
                 </div>`).join("")}
@@ -2203,6 +2207,7 @@
           <span><span class="legend-dot" style="background:var(--accent)"></span>Booked</span>
           <span><span class="legend-dot" style="background:var(--amber)"></span>Inquiry</span>
           <span><span class="legend-dot" style="background:var(--green)"></span>Completed</span>
+          <span><span class="legend-dot" style="background:var(--teal)"></span>Client call</span>
           <span><span class="legend-dot" style="background:var(--muted)"></span>Cancelled</span>
           ${showGoogle ? `<span><span class="legend-dot" style="background:#2f6fd0"></span>From Google Calendar${gcal.loading ? " (loading…)" : ""}</span>` : ""}
         </div>
