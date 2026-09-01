@@ -391,7 +391,41 @@
     if (remindersOpen()) renderReminders();
   }
 
-  $$(".nav-item").forEach(btn => btn.addEventListener("click", () => go(btn.dataset.view)));
+  /* ---------------- Sidebar toggle ---------------- */
+
+  const SIDEBAR_KEY = "djclientflow.sidebarHidden";
+  const isNarrow = () => window.matchMedia("(max-width: 860px)").matches;
+
+  function setSidebar(hidden, remember = true) {
+    $("#appShell").classList.toggle("sidebar-hidden", hidden);
+    $("#menuToggle").setAttribute("aria-expanded", String(!hidden));
+    // On phones the sidebar is an overlay, so the choice isn't worth
+    // remembering — it should always start out of the way.
+    if (remember && !isNarrow()) localStorage.setItem(SIDEBAR_KEY, hidden ? "1" : "0");
+  }
+
+  function toggleSidebar() {
+    setSidebar(!$("#appShell").classList.contains("sidebar-hidden"));
+  }
+
+  $("#menuToggle").addEventListener("click", toggleSidebar);
+  $("#sidebarBackdrop").addEventListener("click", () => setSidebar(true, false));
+
+  // Start collapsed on a small screen; otherwise honour the last choice.
+  setSidebar(isNarrow() || localStorage.getItem(SIDEBAR_KEY) === "1", false);
+
+  let lastNarrow = isNarrow();
+  window.addEventListener("resize", () => {
+    const narrow = isNarrow();
+    if (narrow === lastNarrow) return;      // only react to crossing the breakpoint
+    lastNarrow = narrow;
+    setSidebar(narrow ? true : localStorage.getItem(SIDEBAR_KEY) === "1", false);
+  });
+
+  $$(".nav-item").forEach(btn => btn.addEventListener("click", () => {
+    go(btn.dataset.view);
+    if (isNarrow()) setSidebar(true, false);   // drawer closes behind you
+  }));
 
   /* ================= DASHBOARD ================= */
 

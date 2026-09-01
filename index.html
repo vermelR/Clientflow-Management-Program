@@ -18,7 +18,12 @@
   <div class="auth-screen hidden" id="authScreen"></div>
 
   <div class="app hidden" id="appShell">
-    <aside class="sidebar">
+    <button class="menu-toggle" id="menuToggle" aria-label="Toggle menu" aria-expanded="true" aria-controls="sidebar" title="Show or hide the menu">
+      <span class="menu-bars"><span></span><span></span><span></span></span>
+    </button>
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+    <aside class="sidebar" id="sidebar">
       <div class="brand">
         <div class="brand-logo">🎧</div>
         <div class="brand-text">
