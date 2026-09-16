@@ -621,7 +621,7 @@
     bindRowOpeners(root);
   }
 
-  function openClientForm(id) {
+  function openClientForm(id, onSaved) {
     const c = id ? clientById(id) : null;
     openModal(modalShell(c ? "Edit client" : "New client", `
       <form id="clientForm">
@@ -658,6 +658,7 @@
       else state.clients.push({ id: uid(), createdAt: todayISO(), ...data });
       save(); closeModal(); render();
       toast(c ? "Client updated" : "Client added");
+      onSaved?.();
     });
   }
 
@@ -1610,11 +1611,15 @@
           ? `<a class="btn" id="invDownload" href="#" download>⬇ Download</a>
              <button class="btn" id="invOpenPdf">🖨 Open / Print</button>`
           : `<button class="btn" id="invPrint">🖨 Print / PDF</button>`}
-        ${c?.email ? `<button class="btn" id="invEmail">✉️ Email (mail app)</button>` : ""}
-        ${c?.email ? `<button class="btn btn-primary" id="invGmail">📨 Send via Gmail${isUploaded(inv) ? " with PDF" : ""}</button>` : ""}
+        ${c?.email
+          ? `<button class="btn" id="invEmail">✉️ Email (mail app)</button>
+             <button class="btn btn-primary" id="invGmail">📨 Send via Gmail${isUploaded(inv) ? " with PDF" : ""}</button>`
+          : `<button class="btn btn-primary" id="invAddEmail">✉️ Add an email to send this</button>`}
         <button class="btn" id="invEdit">Edit</button>
       </div>
-      ${!gmailOn && c?.email ? `<div class="gmail-hint">Tip: connect Gmail in <a href="#" id="goSettings">Settings</a> to send invoices directly from here.</div>` : ""}`), true);
+      ${!c?.email
+        ? `<div class="gmail-hint">${escapeHtml(c ? c.name : "This client")} has no email address saved, so there's nowhere to send this yet. Add one and the send buttons appear here.</div>`
+        : !gmailOn ? `<div class="gmail-hint">Tip: connect Gmail in <a href="#" id="goSettings">Settings</a> to send invoices directly from here.</div>` : ""}`), true);
 
     $("#invEdit").addEventListener("click", () => isUploaded(inv) ? openUploadInvoiceForm(id) : openInvoiceForm(id));
     if (isUploaded(inv)) mountAttachmentPreview(inv);
@@ -1635,6 +1640,10 @@
       save(); render(); openInvoiceDetail(id); toast("Marked as sent");
     });
     $("#invPrint")?.addEventListener("click", () => printInvoice(inv));
+    $("#invAddEmail")?.addEventListener("click", () => {
+      if (!c) { toast("This invoice has no client attached — use Edit to pick one"); return; }
+      openClientForm(c.id, () => openInvoiceDetail(id));   // back to the invoice afterwards
+    });
     $("#invEmail")?.addEventListener("click", () => emailInvoice(inv));
     $("#invGmail")?.addEventListener("click", () => sendInvoiceViaGmail(inv, id));
     $("#goSettings")?.addEventListener("click", e => { e.preventDefault(); closeModal(); go("settings"); });
