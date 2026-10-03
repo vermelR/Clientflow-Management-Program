@@ -17,6 +17,23 @@ service cloud.firestore {
       }
     }
 
+    // Quotes and invoices shared with a client on a live link. The link
+    // holds a long random id and that id is the only way in: a client
+    // can fetch the one document they were sent, and nothing can list
+    // the collection to go looking for others. Only the DJ who owns a
+    // shared document can create, change or switch it off.
+    match /shared/{shareId} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if request.auth != null
+                    && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if request.auth != null
+                    && resource.data.ownerUid == request.auth.uid
+                    && request.resource.data.ownerUid == request.auth.uid;
+      allow delete: if request.auth != null
+                    && resource.data.ownerUid == request.auth.uid;
+    }
+
     // Anything else is denied.
     match /{document=**} {
       allow read, write: if false;

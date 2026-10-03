@@ -19,6 +19,7 @@ Run it for yourself, or [host it for many DJs](#cloud-sync-and-multi-user-setup)
   - ✉️ **Email (mail app)** — or open a pre-written email in your usual mail app
 
   Printed and emailed invoices show every payment received and the remaining balance, so a client who paid a deposit sees exactly what's still owed.
+- **🔗 Live quote links** — open any quote or invoice and hit **Share live link**: ClientFlow publishes it to a private page at a long, unguessable address and gives you the link to copy, text, or email (via Gmail or your mail app). From then on the page keeps itself current — change a price, add a package, log a deposit, and what they're looking at updates on its own, even if they already have it open. No re-sending, no "ignore the last PDF". They see the quote and what's still owed; they never see your other clients or your internal notes. One click switches the link off again, and old links politely explain they're no longer active. Requires cloud sync (see below).
 - **🔔 Reminders** — a discreet pill in the corner of every screen opens a panel showing what's coming up in the next 30 days, closest first, with each gig's payment state at a glance (Paid / balance left / unpaid / not invoiced) plus any overdue invoices. The badge counts only what still needs attention, so it disappears when you're all square.
 - **Calendar** — month view of all your gigs, color-coded by status
 - **📅 Calendly scheduling** — paste your Calendly link in Settings and a **Send booking link** button appears on every client and gig. Email it to them (via Gmail or your mail app) or copy it to text over; their name and email are already filled in on the booking page, and a gig's details ride along as a note. *They* choose the time that suits them. Turn on **Show booked calls on your calendar** and whatever they pick appears on the Calendar page — see below.
@@ -123,12 +124,16 @@ Out of the box the app saves to the browser it's opened in. Add a free Firebase 
 3. **Paste it into `firebase-config.js`** in this repo (replacing the `YOUR_...` placeholders) and commit. These values are meant to be public — your data is protected by the security rules in step 6, not by hiding the keys.
 4. **Turn on sign-in methods**: *Authentication → Get started → Sign-in method*, enable **Email/Password** and **Google**.
 5. **Create the database**: *Firestore Database → Create database* → start in **production mode** → pick a region near you.
-6. **Publish the security rules** — this is the step that keeps each account's data private. Open *Firestore Database → Rules*, paste the contents of [`firestore.rules`](firestore.rules), and click **Publish**.
+6. **Publish the security rules** — this is the step that keeps each account's data private. Open *Firestore Database → Rules*, paste the contents of [`firestore.rules`](firestore.rules), and click **Publish**. Re-paste them whenever this file changes in the repo; the current version also covers uploaded invoice PDFs and live quote links.
 7. **Authorize your domain**: *Authentication → Settings → Authorized domains* → add `vermelr.github.io` (and any custom domain). Without this, Google sign-in is blocked.
 
 Push the change and the live site now opens on a login screen. Anyone can create an account and start managing their own DJ business.
 
 > Leave `firebase-config.js` untouched and the app simply keeps working in single-user mode, saving to the browser — handy for testing locally.
+
+### How live quote links stay private
+
+A shared quote lives in its own `shared/{id}` document, separate from your account's data. The id is 32 random hex characters, and the rules allow fetching **one** document by its exact id — nothing can list the collection to go hunting for others. Only the account that created a shared document can change it or switch it off. The published copy carries the quote, your business details and what's been paid; it deliberately leaves out the client's own email and phone number and anything else in your database, because a link can always be forwarded.
 
 ### Free tier, in plain terms
 
@@ -152,4 +157,4 @@ The site is a PWA, so it installs like a native app and launches offline:
 
 ## 🛠 Tech
 
-Plain HTML, CSS and JavaScript — zero dependencies, zero build step. Easy to customize: colors live in `styles.css` (`:root` variables), all logic in `app.js`.
+Plain HTML, CSS and JavaScript — zero dependencies, zero build step. Easy to customize: colors live in `styles.css` (`:root` variables), all logic in `app.js`. The client-facing live quote page is its own small file (`quote.html` + `quote.js`) and shares the same stylesheet, so the quote a client opens looks exactly like the one you print.

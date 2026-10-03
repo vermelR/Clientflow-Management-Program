@@ -145,6 +145,8 @@
   function save() {
     saveLocal();
     queueCloudPush();
+    // Anything shared with a client is republished so their page stays live.
+    queueSharePush();
   }
 
   function saveLocal() {
@@ -958,7 +960,7 @@
               const paid = invPaid(i), bal = invBalance(i);
               return `
               <tr class="clickable" data-open-invoice="${i.id}">
-                <td class="nowrap"><strong>${escapeHtml(i.number)}</strong>${isUploaded(i) ? ` <span class="pdf-tag" title="Uploaded PDF">PDF</span>` : ""}</td>
+                <td class="nowrap"><strong>${escapeHtml(i.number)}</strong>${isUploaded(i) ? ` <span class="pdf-tag" title="Uploaded PDF">PDF</span>` : ""}${shareActive(i) ? ` <span class="live-tag" title="Shared with the client on a live link">LIVE</span>` : ""}</td>
                 <td>${escapeHtml(clientName(i.clientId))}${i.eventId && eventById(i.eventId) ? `<span class="sub">${escapeHtml(eventById(i.eventId).title)}</span>` : ""}</td>
                 <td class="nowrap">${fmtDate(i.issueDate)}</td>
                 <td class="nowrap">${fmtDate(i.dueDate)}</td>
@@ -1204,8 +1206,9 @@
     renderEditor();
 
     $("#cancelModal").addEventListener("click", closeModal);
-    $("#deleteInvoice")?.addEventListener("click", () => {
+    $("#deleteInvoice")?.addEventListener("click", async () => {
       if (!confirm("Delete this invoice?")) return;
+      await retireShare(inv);     // a client's live link must not outlive the invoice
       state.invoices = state.invoices.filter(x => x.id !== id);
       save(); closeModal(); render(); toast("Invoice deleted");
     });
@@ -1325,6 +1328,7 @@
     $("#cancelModal").addEventListener("click", closeModal);
     $("#deleteUploadInv")?.addEventListener("click", async () => {
       if (!confirm("Delete this invoice and its uploaded file?")) return;
+      await retireShare(inv);
       if (inv.file?.id) await deleteAttachment(inv.file.id);
       state.invoices = state.invoices.filter(x => x.id !== id);
       save(); closeModal(); render(); toast("Invoice deleted");
@@ -1494,7 +1498,7 @@
 
     const billLines = [
       c?.name, c?.company, c?.email, c?.phone,
-      ev ? `${ev.title} — ${fmtDate(ev.date)}` : null,
+      ev ? `${ev.title} — ${fmtDateRange(ev.date, ev.endDate)}` : null,
       ev?.venue,
     ].filter(Boolean).map(l => `<div>${escapeHtml(l)}</div>`).join("") || "<div>N/A</div>";
 
@@ -1567,6 +1571,12 @@
         <span style="color:var(--muted);font-size:13px">${c ? "Billed to " + escapeHtml(c.name) : ""}${inv.paidDate ? " · paid in full " + fmtDate(inv.paidDate) : ""}</span>
       </div>
 
+      ${shareActive(inv) ? `<div class="share-strip">
+        <span class="live-dot"></span>
+        <span><strong>Live link is on.</strong> ${c ? escapeHtml(c.name.split(" ")[0]) : "Your client"} sees every change you make here.</span>
+        <button class="btn btn-sm" id="invShareManage">Manage link</button>
+      </div>` : ""}
+
       <div class="pay-panel">
         <div class="pay-summary">
           <div class="pay-stat"><div class="lbl">Invoice total</div><div class="val">${money(total)}</div></div>
@@ -1615,6 +1625,7 @@
           ? `<button class="btn" id="invEmail">✉️ Email (mail app)</button>
              <button class="btn btn-primary" id="invGmail">📨 Send via Gmail${isUploaded(inv) ? " with PDF" : ""}</button>`
           : `<button class="btn btn-primary" id="invAddEmail">✉️ Add an email to send this</button>`}
+        <button class="btn" id="invShare">${shareActive(inv) ? "🔗 Live link" : "🔗 Share live link"}</button>
         <button class="btn" id="invEdit">Edit</button>
       </div>
       ${!c?.email
@@ -1644,6 +1655,8 @@
       if (!c) { toast("This invoice has no client attached — use Edit to pick one"); return; }
       openClientForm(c.id, () => openInvoiceDetail(id));   // back to the invoice afterwards
     });
+    $("#invShare").addEventListener("click", () => openShareLinkModal(id));
+    $("#invShareManage")?.addEventListener("click", () => openShareLinkModal(id));
     $("#invEmail")?.addEventListener("click", () => emailInvoice(inv));
     $("#invGmail")?.addEventListener("click", () => sendInvoiceViaGmail(inv, id));
     $("#goSettings")?.addEventListener("click", e => { e.preventDefault(); closeModal(); go("settings"); });
@@ -3245,6 +3258,433 @@ const firebaseConfig = {
     rerender();
   }
 
+  /* ================= LIVE SHARE LINK (quotes & invoices) ==============
+     Sharing publishes a client-safe copy of one invoice to its own
+     public Firestore document, which quote.html reads through an
+     unguessable link. Every later edit re-publishes it, so the client
+     keeps looking at the current numbers without anything being
+     re-sent. Only the fields a client should see are copied across:
+     the link can be forwarded, so their own contact details stay out. */
+
+  const SHARE_COLLECTION = "shared";
+  const SHARE_DOC_LIMIT = 900000;    // Firestore caps a document at 1 MB
+  const SHARE_LOGO_LIMIT = 200000;   // a logo bigger than this isn't worth the space
+
+  let sharePushTimer = null;
+  // invoice id → the last payload published, so an unchanged invoice
+  // never costs a write.
+  const sharePublished = new Map();
+
+  function shareActive(inv) { return !!(inv && inv.share && inv.share.id && !inv.share.revokedAt); }
+
+  // Long and random: the link itself is the only thing guarding the page.
+  function newShareId() {
+    const bytes = new Uint8Array(16);
+    if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(bytes);
+    else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    return [...bytes].map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  function shareUrl(shareId) {
+    return new URL(`quote.html?q=${encodeURIComponent(shareId)}`, location.href).href;
+  }
+
+  function shareDocRef(shareId) {
+    if (!cloud.db || !cloud.fs || !cloud.user) return null;
+    return cloud.fs.doc(cloud.db, SHARE_COLLECTION, shareId);
+  }
+
+  // Sharing rides on the cloud account: without one there is nowhere
+  // for the client's page to read from.
+  function canShare() { return !!(cloud.user && cloud.db && cloud.fs); }
+
+  function sharePayload(inv) {
+    const s = state.settings;
+    const c = clientById(inv.clientId);
+    const ev = inv.eventId ? eventById(inv.eventId) : null;
+
+    const groups = (inv.groups || [])
+      .filter(g => g.name || (g.items || []).length)
+      .map(g => ({
+        name: g.name || "",
+        total: groupSum(g),
+        allComp: (g.items || []).length > 0 && !(g.items || []).some(it => !it.comp),
+        items: (g.items || []).filter(it => it.name).map(it => ({
+          name: it.name,
+          qty: Number(it.qty) || 1,
+          price: Number(it.price) || 0,
+          comp: !!it.comp,
+          amount: itemAmount(it),
+          details: (it.details || []).filter(d => d.name).map(d => ({
+            name: d.name, qty: Number(d.qty) || 1,
+          })),
+        })),
+      }));
+
+    return {
+      v: 1,
+      ownerUid: cloud.user.uid,
+      revoked: false,
+      currency: s.currency || "USD",
+      business: {
+        name: s.businessName || "",
+        ownerName: s.ownerName || "",
+        logoText: s.logoText || "",
+        // A huge inline logo would blow the document limit for no gain.
+        logoImg: s.logoImg && s.logoImg.length <= SHARE_LOGO_LIMIT ? s.logoImg : "",
+        address: s.address || "",
+        phone: s.phone || "",
+        email: s.email || "",
+      },
+      doc: {
+        heading: inv.status === "draft" ? "Quote" : "Invoice",
+        uploaded: isUploaded(inv),
+        fileName: (inv.file && inv.file.name) || "",
+        number: inv.number || "",
+        status: invStatus(inv),
+        issueDate: inv.issueDate || "",
+        dueDate: inv.dueDate || "",
+        paidDate: inv.paidDate || "",
+        // Deliberately no client email or phone: the link may be forwarded.
+        billTo: [
+          c && c.name, c && c.company,
+          ev ? `${ev.title} — ${fmtDateRange(ev.date, ev.endDate)}` : "",
+          ev && ev.venue,
+        ].filter(Boolean),
+        groups,
+        discounts: (inv.discounts || []).map(d => ({
+          name: d.name || "Discount", amount: Math.abs(Number(d.amount) || 0),
+        })),
+        payments: (inv.payments || []).map(p => ({
+          date: p.date || "", note: p.note || "Payment",
+          method: p.method || "", amount: Number(p.amount) || 0,
+        })),
+        taxRate: Number(inv.taxRate) || 0,
+        tax: invTax(inv),
+        subtotal: invSubtotal(inv),
+        discountTotal: invDiscountTotal(inv),
+        total: invTotal(inv),
+        paid: invPaid(inv),
+        balance: invBalance(inv),
+        fullyPaid: isFullyPaid(inv) && invPaid(inv) > 0,
+        notes: inv.notes || "",
+        hotelText: inv.hotelEnabled ? (inv.hotelText || "") : "",
+        paymentInstructions: s.paymentInstructions || "",
+      },
+    };
+  }
+
+  async function publishShare(inv) {
+    if (!shareActive(inv) || !canShare()) return false;
+
+    const payload = sharePayload(inv);
+    const fingerprint = JSON.stringify(payload);
+    if (sharePublished.get(inv.id) === fingerprint) return true;   // nothing changed
+
+    const body = { ...payload, updatedAt: cloud.fs.serverTimestamp(), updatedAtMs: Date.now() };
+    if (fingerprint.length > SHARE_DOC_LIMIT) {
+      body.business = { ...body.business, logoImg: "" };
+      if (JSON.stringify(body).length > SHARE_DOC_LIMIT) {
+        throw new Error("This invoice is too large to share — a big logo image is the usual cause.");
+      }
+    }
+    await cloud.fs.setDoc(shareDocRef(inv.share.id), body);
+    sharePublished.set(inv.id, fingerprint);
+    return true;
+  }
+
+  // Called from save(): any edit anywhere — line items, a new deposit,
+  // even the business name in Settings — refreshes every live link.
+  function queueSharePush() {
+    if (!canShare() || !state.invoices.some(shareActive)) return;
+    clearTimeout(sharePushTimer);
+    sharePushTimer = setTimeout(pushShares, 1200);
+  }
+
+  async function pushShares() {
+    for (const inv of state.invoices.filter(shareActive)) {
+      try { await publishShare(inv); }
+      catch (e) { console.warn("Could not refresh a live link", e); }
+    }
+  }
+
+  // Firestore queues a write until it can reach the server, so its
+  // promise can sit unresolved for a long time on a bad connection.
+  // The write still lands; the UI just shouldn't wait forever for it.
+  function withTimeout(promise, ms) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const err = new Error("Still saving…");
+        err.queued = true;
+        reject(err);
+      }, ms);
+      promise.then(v => { clearTimeout(timer); resolve(v); },
+                   e => { clearTimeout(timer); reject(e); });
+    });
+  }
+
+  // Resolves to true when the link is live, false when the write is
+  // queued and will land as soon as there's a connection.
+  async function createShare(inv) {
+    if (!navigator.onLine) throw new Error("You're offline — reconnect to create a live link.");
+    inv.share = { id: newShareId(), createdAt: new Date().toISOString() };
+    sharePublished.delete(inv.id);
+    try {
+      await withTimeout(publishShare(inv), 12000);
+    } catch (e) {
+      if (!e.queued) { delete inv.share; throw e; }   // never advertise a link that isn't coming
+      save();
+      return false;
+    }
+    save();
+    return true;
+  }
+
+  // The document is overwritten with a tombstone rather than deleted, so
+  // an old link explains itself instead of looking broken.
+  async function revokeShare(inv) {
+    if (!inv.share || !inv.share.id) return true;
+    let live = true;
+    if (canShare()) {
+      try {
+        await withTimeout(cloud.fs.setDoc(shareDocRef(inv.share.id), {
+          v: 1, ownerUid: cloud.user.uid, revoked: true,
+          updatedAt: cloud.fs.serverTimestamp(), updatedAtMs: Date.now(),
+        }), 12000);
+      } catch (e) {
+        if (!e.queued) throw e;
+        live = false;      // queued: the link goes dark once we're back online
+      }
+    }
+    inv.share = { ...inv.share, revokedAt: new Date().toISOString() };
+    sharePublished.delete(inv.id);
+    save();
+    return live;
+  }
+
+  // Used when an invoice is deleted: a dead link is better than one
+  // showing numbers that no longer exist, but a failure here must not
+  // block the delete.
+  async function retireShare(inv) {
+    if (!shareActive(inv)) return;
+    try { await revokeShare(inv); }
+    catch (e) { console.warn("Could not switch off the live link", e); }
+  }
+
+  function shareEmailSubject(inv) {
+    const s = state.settings;
+    const what = inv.status === "draft" ? "quote" : "invoice";
+    return `Your ${what} from ${s.businessName} — ${inv.number}`;
+  }
+
+  function shareEmailText(inv, url) {
+    const s = state.settings;
+    const c = clientById(inv.clientId);
+    const what = inv.status === "draft" ? "quote" : "invoice";
+    return [
+      `Hi ${c ? c.name.split(" ")[0] : "there"},`,
+      ``,
+      `Here is your ${what} from ${s.businessName}:`,
+      url,
+      ``,
+      `That page stays up to date — if we change anything, or once a payment lands, it updates itself. No need to wait for a new email.`,
+      ``,
+      invPaid(inv) > 0
+        ? `${what === "quote" ? "Quote" : "Invoice"} total ${money(invTotal(inv))} · received ${money(invPaid(inv))} · balance ${money(Math.max(0, invBalance(inv)))}`
+        : `Total: ${money(invTotal(inv))}`,
+      ``,
+      `Thank you!`,
+      s.ownerName || s.businessName,
+      s.phone || "",
+    ].join("\n");
+  }
+
+  function shareEmailHtml(inv, url) {
+    const s = state.settings;
+    const c = clientById(inv.clientId);
+    const what = inv.status === "draft" ? "quote" : "invoice";
+    return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#222;">
+      <div style="max-width:560px;margin:0 auto;background:#fff;">
+        <div style="background:#111;color:#fff;padding:26px 32px;">
+          <div style="font-size:12px;color:#bbb;letter-spacing:1px;">${escapeHtml(s.businessName)}</div>
+          <div style="font-size:27px;font-weight:300;">Your ${what} — ${escapeHtml(inv.number)}</div>
+        </div>
+        <div style="padding:24px 32px 6px;font-size:15px;line-height:1.6;">
+          Hi ${escapeHtml(c ? c.name.split(" ")[0] : "there")},<br><br>
+          Here is your ${what}. It's a live page — if anything changes, or once a payment lands, it updates itself.
+        </div>
+        <p style="margin:22px 32px;">
+          <a href="${escapeHtml(url)}" style="background:#e85d26;color:#fff;text-decoration:none;font-weight:bold;padding:13px 26px;border-radius:8px;display:inline-block;font-size:15px;">View your ${what}</a>
+        </p>
+        <div style="padding:0 32px;font-size:12.5px;color:#777;line-height:1.6;">Or paste this into your browser:<br>
+          <a href="${escapeHtml(url)}" style="color:#e85d26;">${escapeHtml(url)}</a>
+        </div>
+        <div style="padding:18px 32px;font-size:14px;color:#333;">
+          ${invPaid(inv) > 0
+            ? `Total ${money(invTotal(inv))} &nbsp;·&nbsp; received ${money(invPaid(inv))} &nbsp;·&nbsp; <strong>balance ${money(Math.max(0, invBalance(inv)))}</strong>`
+            : `<strong>Total: ${money(invTotal(inv))}</strong>`}
+        </div>
+        <div style="padding:6px 32px 28px;font-size:13px;color:#555;line-height:1.7;">
+          Thank you!<br><strong>${escapeHtml(s.ownerName || s.businessName)}</strong><br>
+          ${escapeHtml(s.phone || "")}<br>${escapeHtml(s.email || "")}
+        </div>
+      </div>
+    </body></html>`;
+  }
+
+  function openShareLinkModal(invId) {
+    const inv = invoiceById(invId);
+    if (!inv) return;
+    const what = inv.status === "draft" ? "quote" : "invoice";
+
+    if (!canShare()) {
+      openModal(modalShell("A live link needs your account", `
+        <p class="settings-note">
+          The client's page reads this ${what} from your cloud account — that's what keeps it live.
+          Sign in (or turn on cloud sync in Settings) and the link shows up here.
+        </p>
+        <div class="modal-actions">
+          <button class="btn" id="shareBack">Back to the invoice</button>
+          <button class="btn btn-primary" id="shareSettings">Open Settings</button>
+        </div>`));
+      $("#shareBack").addEventListener("click", () => openInvoiceDetail(invId));
+      $("#shareSettings").addEventListener("click", () => { closeModal(); go("settings"); });
+      return;
+    }
+
+    const c = clientById(inv.clientId);
+    const active = shareActive(inv);
+    const url = active ? shareUrl(inv.share.id) : "";
+    const gmailPossible = !!(c && c.email && (canUseAccountForGmail() || state.settings.googleClientId));
+
+    if (!active) {
+      openModal(modalShell(`Share this ${what} live`, `
+        <p class="settings-note">
+          This creates a private page for ${c ? escapeHtml(c.name) : "your client"} at a link only they get.
+          Every change you make here — new line items, a different price, a deposit you record —
+          shows up on their page straight away, so you never have to re-send a ${what}.
+        </p>
+        <div class="notes-box" style="margin-top:12px">
+          They'll see the ${what} itself and what's still owed. They won't see your other clients,
+          your gig notes, or anything else in here.
+        </div>
+        <div class="modal-actions">
+          <button class="btn" id="shareCancel">Cancel</button>
+          <button class="btn btn-primary" id="shareCreate">🔗 Create the live link</button>
+        </div>`));
+
+      $("#shareCancel").addEventListener("click", () => openInvoiceDetail(invId));
+      $("#shareCreate").addEventListener("click", async () => {
+        const btn = $("#shareCreate");
+        btn.disabled = true;
+        btn.textContent = "Creating…";
+        try {
+          const live = await createShare(inv);
+          render();
+          openShareLinkModal(invId);
+          toast(live ? "Live link ready 🔗" : "Link created — it goes live once your connection catches up");
+        } catch (e) {
+          console.warn(e);
+          btn.disabled = false;
+          btn.textContent = "🔗 Create the live link";
+          toast(e.message || "Could not create the link — check your connection");
+        }
+      });
+      return;
+    }
+
+    openModal(modalShell(`Live ${what} link`, `
+      <p class="settings-note">
+        Send this to ${c ? escapeHtml(c.name) : "your client"}. The page updates itself every time you
+        change this ${what}, so the link only ever needs to go out once.
+      </p>
+
+      <div class="field full">
+        <label>Their link</label>
+        <input id="shareUrlInput" readonly value="${escapeHtml(url)}">
+      </div>
+
+      <div class="booking-actions">
+        <button class="btn" id="copyShareLink">🔗 Copy link</button>
+        ${c && c.email ? `<button class="btn" id="mailShareLink">✉️ Email (mail app)</button>` : ""}
+        ${gmailPossible ? `<button class="btn btn-primary" id="gmailShareLink">📨 Send via Gmail</button>` : ""}
+        <button class="btn" id="previewShareLink">👁 See what they see</button>
+      </div>
+
+      ${!(c && c.email) ? `<div class="gmail-hint">This client has no email on file — copy the link and text it to them, or add an email address first.</div>` : ""}
+
+      <div class="share-stop">
+        <button class="btn btn-sm btn-danger" id="stopShareLink">Stop sharing</button>
+        <span class="hint">Switches the link off. Anyone who still has it sees a short "no longer available" note.</span>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn" id="shareDone">Done</button>
+      </div>`));
+
+    $("#shareDone").addEventListener("click", () => openInvoiceDetail(invId));
+
+    $("#copyShareLink").addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(url);
+        toast("Link copied 🔗");
+      } catch {
+        const input = $("#shareUrlInput");
+        input.focus();
+        input.select();
+        toast("Press Ctrl/Cmd+C to copy");
+      }
+    });
+
+    $("#previewShareLink").addEventListener("click", () => window.open(url, "_blank", "noopener"));
+
+    $("#mailShareLink")?.addEventListener("click", () => {
+      window.location.href = `mailto:${encodeURIComponent(c.email)}?subject=${encodeURIComponent(shareEmailSubject(inv))}&body=${encodeURIComponent(shareEmailText(inv, url))}`;
+      toast("Opening your mail app…");
+    });
+
+    $("#gmailShareLink")?.addEventListener("click", async () => {
+      const btn = $("#gmailShareLink");
+      btn.disabled = true;
+      try {
+        if (!hasGoogleScope(GMAIL_SCOPE)) { toast("Connecting to Gmail…"); await ensureGoogleScope(GMAIL_SCOPE); }
+        toast("Sending…");
+        const send = () => gmailSend(c.email, shareEmailSubject(inv), shareEmailHtml(inv, url));
+        try {
+          await send();
+        } catch (err) {
+          if (!err || !err.expired) throw err;
+          await ensureGoogleScope(GMAIL_SCOPE);
+          await send();
+        }
+        if (inv.status === "draft") { inv.status = "sent"; save(); render(); }
+        closeModal();
+        toast(`Link sent to ${c.email} 🔗`);
+      } catch (err) {
+        console.warn(err);
+        btn.disabled = false;
+        if (err && (err.setupNeeded || err.needsConsent)) showGoogleProblem(err, "Gmail");
+        else toast(err.message || "Could not send — try the mail app instead");
+      }
+    });
+
+    $("#stopShareLink").addEventListener("click", async () => {
+      if (!confirm("Switch this link off? The client will no longer be able to open it.")) return;
+      const btn = $("#stopShareLink");
+      btn.disabled = true;
+      try {
+        const done = await revokeShare(inv);
+        render();
+        toast(done ? "Link switched off" : "Link switched off — it stops working once you're back online");
+        openInvoiceDetail(invId);
+      } catch (e) {
+        console.warn(e);
+        btn.disabled = false;
+        toast(e.message || "Could not switch the link off — check your connection");
+      }
+    });
+  }
+
   /* ================= ATTACHMENTS (uploaded invoice PDFs) =================
      Files are cached in IndexedDB on the device and, when small enough,
      mirrored to their own Firestore document so they follow the account
@@ -3522,6 +3962,7 @@ const firebaseConfig = {
 
   function onSignedIn(user) {
     cloud.user = user;
+    sharePublished.clear();
     const previousKey = storageKey();
     activeUid = user.uid;
     // Load (or start) this account's own local cache before syncing.
@@ -3538,6 +3979,7 @@ const firebaseConfig = {
     cloud.user = null;
     stopSync();
     activeUid = null;
+    sharePublished.clear();   // the next account must not inherit this one's "already published"
     setCloudStatus(accountsMode() ? "signed-out" : "off");
     if (accountsMode() && !isGuest()) {
       state = emptyState();   // nothing of the last account stays on screen
@@ -3781,6 +4223,9 @@ const firebaseConfig = {
         first = false;
         reconcileFirstSync(user, data);
         setCloudStatus("live");
+        // Catch up any live client links that changed while this device
+        // was offline, or that another device couldn't publish.
+        queueSharePush();
         return;
       }
       if (!data) return;

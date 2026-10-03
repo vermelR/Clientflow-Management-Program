@@ -831,3 +831,132 @@ tr.row-hotel td.hotel-label { font-weight: 700; color: #e85d26; font-size: 13px;
   opacity: 0; transition: opacity 0.2s;
 }
 .saved-note.show { opacity: 1; }
+
+/* ---------- Live share link (in the app) ---------- */
+.live-tag {
+  font-size: 9.5px; font-weight: 800; letter-spacing: 0.04em;
+  background: var(--green-soft); color: var(--green);
+  padding: 2px 5px; border-radius: 4px; vertical-align: middle;
+}
+.live-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+  display: inline-block; flex-shrink: 0;
+  box-shadow: 0 0 0 0 rgba(29, 158, 111, 0.55);
+  animation: live-pulse 2.2s ease-out infinite;
+}
+@keyframes live-pulse {
+  70% { box-shadow: 0 0 0 7px rgba(29, 158, 111, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(29, 158, 111, 0); }
+}
+@media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+
+.share-strip {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: var(--green-soft); border-radius: 10px;
+  padding: 10px 14px; margin-bottom: 14px; font-size: 13px; color: #14543c;
+}
+.share-strip .btn { margin-left: auto; }
+.share-stop {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border);
+}
+#shareUrlInput {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; background: var(--bg);
+}
+
+/* ---------- The client's live quote page (quote.html) ---------- */
+.quote-body {
+  background: var(--bg); min-height: 100vh;
+  padding: 0; display: block;
+}
+.quote-wrap { max-width: 880px; margin: 0 auto; padding: 24px 16px 60px; }
+
+.quote-top {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  background: var(--primary); color: #fff;
+  border-radius: var(--radius); padding: 16px 20px; margin-bottom: 18px;
+}
+.quote-top-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 300px; }
+.quote-live {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 13px; font-weight: 700; letter-spacing: 0.02em;
+  text-transform: capitalize;
+}
+.quote-top-sub { font-size: 12.5px; color: #a9a29c; line-height: 1.5; }
+.quote-top .btn { margin-left: auto; flex-shrink: 0; }
+
+.quote-doc {
+  background: #e0e0e0; border-radius: var(--radius); padding: 18px;
+  overflow-x: auto; margin-bottom: 18px;
+}
+.quote-doc .rnd-doc { margin: 0 auto; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.18); }
+
+.quote-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 18px 20px; margin-bottom: 14px;
+  box-shadow: var(--shadow);
+}
+.quote-card h2 { font-size: 14px; margin-bottom: 8px; }
+.quote-card p { font-size: 13.5px; color: var(--muted); line-height: 1.7; }
+.quote-card a { color: var(--accent-dark); }
+
+.quote-foot {
+  font-size: 12px; color: var(--muted); text-align: center;
+  line-height: 1.6; padding: 10px 6px 0;
+}
+
+.quote-loading, .quote-note {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 44px 28px; text-align: center; color: var(--muted);
+  font-size: 14px; line-height: 1.7; margin-top: 40px;
+}
+.quote-note-mark { font-size: 38px; margin-bottom: 10px; }
+.quote-note h1 { font-size: 19px; color: var(--text); margin-bottom: 10px; }
+.quote-note p { max-width: 460px; margin: 0 auto; }
+
+/* The invoice design is a fixed 816px sheet; on a phone it becomes fluid
+   instead of something to pinch and scroll. */
+@media (max-width: 880px) {
+  .quote-doc { padding: 0; background: none; }
+  .quote-doc .rnd-doc { width: 100%; box-shadow: var(--shadow); border-radius: var(--radius); overflow: hidden; }
+  .quote-doc .rnd-header { padding: 22px 20px; }
+  .quote-doc .rnd-title { font-size: 30px; }
+  .quote-doc .rnd-logo { font-size: 36px; height: 56px; }
+  .quote-doc .rnd-meta { flex-wrap: wrap; gap: 6px 0; padding: 12px 20px; }
+  .quote-doc .rnd-meta-item { flex: 1 1 50%; border-right: none; padding-right: 0; margin-right: 0; }
+  .quote-doc .rnd-parties { grid-template-columns: 1fr; gap: 16px; padding: 16px 20px; }
+  .quote-doc .rnd-notes, .quote-doc .rnd-total, .quote-doc .rnd-footer { padding-left: 20px; padding-right: 20px; }
+  /* Fixed layout keeps the money column on screen instead of pushing
+     it off the right edge into a sideways scroll. */
+  .quote-doc .rnd-table { table-layout: fixed; }
+  .quote-doc .rnd-table td, .quote-doc .rnd-table th { font-size: 11.5px; overflow-wrap: anywhere; }
+  .quote-doc .rnd-table thead th { font-size: 10px; letter-spacing: 0; padding-left: 8px; padding-right: 8px; }
+  /* Narrower description, wider money columns — an amount that wraps
+     mid-number is worse than a description on two lines. */
+  .quote-doc .rnd-table th:first-child { width: 40% !important; }
+  .quote-doc .rnd-table th:nth-child(2) { width: 13% !important; }
+  .quote-doc .rnd-table th:nth-child(3), .quote-doc .rnd-table th:nth-child(4) { width: 23.5% !important; }
+  .quote-doc .rnd-table td:not(:first-child) { white-space: nowrap; overflow-wrap: normal; }
+  /* …except the hotel clause, which is a paragraph, not a number. */
+  .quote-doc .rnd-table tr.row-hotel td { white-space: normal; overflow-wrap: anywhere; }
+  .quote-doc .rnd-table thead th, .quote-doc tr.row-event td, .quote-doc tr.row-discount-group td { padding-left: 10px; padding-right: 10px; }
+  .quote-doc tr.row-pkg td, .quote-doc tr.row-discount td, .quote-doc tr.row-payment td { padding-left: 16px; padding-right: 10px; }
+  .quote-doc tr.row-equip td { padding-left: 24px; padding-right: 10px; }
+  .quote-doc .rnd-total { flex-wrap: wrap; }
+  .quote-doc .rnd-total-sub { flex: 1 1 100%; margin: 0 0 6px; }
+  .quote-doc .rnd-total-label { margin-right: auto; }
+  .quote-top .btn { margin-left: 0; }
+}
+
+/* The app prints through #printArea, which this page doesn't have —
+   so print the page itself, minus the parts that only help on screen. */
+@media print {
+  body.quote-body * { visibility: visible; }
+  body.quote-body { background: #fff; }
+  body.quote-body .quote-wrap { max-width: none; padding: 0; }
+  body.quote-body .quote-doc { padding: 0; background: none; }
+  body.quote-body .quote-doc .rnd-doc { width: 100%; box-shadow: none; }
+  body.quote-body .quote-top, body.quote-body .quote-foot { display: none !important; }
+}
