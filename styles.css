@@ -458,7 +458,17 @@ td .sub { display: block; font-size: 12px; color: var(--muted); margin-top: 2px;
   display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px;
   font-weight: 700; color: var(--muted); white-space: nowrap; cursor: pointer;
 }
-.comp-toggle input { accent-color: var(--accent); }
+.comp-toggle input { accent-color: var(--accent); flex-shrink: 0; }
+/* Inside a form field the label is a sentence, not a chip: let it wrap
+   rather than run off the edge of the dialog. */
+/* Inside a form field, `.field label { display:block }` and
+   `.field input { width:100% }` would otherwise stretch the checkbox
+   across the row and push its label onto its own line. */
+.field .comp-toggle, .settings-note + .comp-toggle, .comp-toggle.wraps {
+  display: flex; white-space: normal; align-items: flex-start;
+  line-height: 1.45; gap: 8px;
+}
+.field .comp-toggle input[type="checkbox"] { width: auto; flex: 0 0 auto; margin-top: 1px; }
 .detail-rows {
   margin: 6px 0 4px 14px; padding-left: 10px; border-left: 2px solid var(--border);
   display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
@@ -683,7 +693,7 @@ tr.row-hotel td.hotel-label { font-weight: 700; color: #e85d26; font-size: 13px;
   body * { visibility: hidden; }
   .print-area, .print-area * { visibility: visible; }
   .print-area { display: block; position: absolute; inset: 0; background: #fff; }
-  .print-area .rnd-doc { width: 100%; box-shadow: none; }
+  .print-area .rnd-doc, .print-area .agr-doc { width: 100%; box-shadow: none; }
   .sidebar, .main, .modal-overlay, .toast { display: none !important; }
 }
 
@@ -1045,8 +1055,11 @@ tr.row-hotel td.hotel-label { font-weight: 700; color: #e85d26; font-size: 13px;
 .tpl-head .remove-line:disabled { opacity: 0.3; cursor: default; }
 
 /* ---------- The agreement document ---------- */
+/* Unlike the invoice (a fixed-column table), an agreement is flowing
+   text — so it shrinks to whatever space it's given instead of being
+   cut off by the edge of a dialog. */
 .agr-doc {
-  width: 816px; background: #fff; color: #222;
+  width: 816px; max-width: 100%; background: #fff; color: #222;
   font-family: "Segoe UI", Arial, sans-serif; font-size: 13px;
 }
 .doc-preview .agr-doc { margin: 0 auto; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2); }
@@ -1089,6 +1102,20 @@ tr.row-hotel td.hotel-label { font-weight: 700; color: #e85d26; font-size: 13px;
 .sig-meta { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; font-size: 11.5px; color: #555; }
 .sig-meta strong { font-size: 12px; color: #222; }
 
+/* Narrow dialogs and phones: pull the page margins in so the wording
+   keeps its width. */
+@media (max-width: 900px) {
+  .agr-head { padding: 22px 22px; }
+  .agr-title { font-size: 26px; }
+  .agr-logo { font-size: 30px; height: 48px; }
+  .agr-meta { padding: 12px 22px; gap: 10px 18px; }
+  .agr-body { padding: 20px 22px 6px; }
+  .agr-signatures { padding: 16px 22px 26px; gap: 26px; }
+}
+@media (max-width: 620px) {
+  .agr-signatures { grid-template-columns: 1fr; }
+}
+
 .sign-card { border-color: var(--accent); }
 .signed-card { border-color: var(--green); background: var(--green-soft); }
 .signed-card h2 { color: var(--green); }
@@ -1104,3 +1131,32 @@ tr.row-hotel td.hotel-label { font-weight: 700; color: #e85d26; font-size: 13px;
   .quote-doc .agr-signatures { grid-template-columns: 1fr; gap: 26px; padding: 16px 20px 26px; }
   .sig-typed { font-size: 26px; white-space: normal; }
 }
+
+/* ---------- First-run contract setup ---------- */
+.setup-choices { display: grid; gap: 12px; margin-top: 16px; }
+.setup-choice {
+  display: flex; gap: 14px; align-items: flex-start; text-align: left;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--card);
+  padding: 16px 18px; cursor: pointer; font: inherit; color: inherit;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+.setup-choice:hover { border-color: var(--accent); background: var(--accent-soft); }
+.setup-choice:active { transform: translateY(1px); }
+.setup-choice > span:last-child { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.setup-choice strong { font-size: 14.5px; }
+.setup-choice span span { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+.setup-icon { font-size: 24px; line-height: 1.2; flex-shrink: 0; }
+#pasteBox {
+  width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px; line-height: 1.6;
+}
+
+/* Placeholder chips in the template editor */
+.merge-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 2px; }
+.merge-chip {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+  background: var(--gray-soft); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 3px 8px; cursor: pointer;
+}
+.merge-chip:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-dark); }
+.merge-chips-hint { font-size: 12px; color: var(--muted); margin-top: 12px; }

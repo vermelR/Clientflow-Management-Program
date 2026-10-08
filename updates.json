@@ -4,8 +4,10 @@
       "title": "Contracts you can send and sign",
       "date": "2026-10-08",
       "notes": [
-        "New Contracts section. Your own agreement wording lives in Settings — the app starts you off with a full DJ contract you can edit clause by clause, or paste your own in.",
-        "Draw one up per gig and the client, venue, dates, fee, deposit, overtime rate and cancellation terms fill themselves in from records you already have.",
+        "New Contracts section. ClientFlow doesn't come with a contract of its own — the first time you open it, it asks for yours.",
+        "Paste in the agreement you already use (copied out of Word, Google Docs or a PDF) and it's split into editable sections, or start from a blank outline of the usual headings and write your own.",
+        "Swap the bits that change — the client, the date, the fee — for placeholders like {{clientName}} or {{fee}} and they fill themselves in on every contract after that.",
+        "Draw one up per gig and the client, venue, dates, fee, deposit, overtime rate and cancellation terms come across from records you already have.",
         "Sign it yourself — type your name or draw it — then send the client a private link. They read it and sign from a phone or laptop, and their signature comes straight back here, timestamped.",
         "The wording is frozen the moment a contract is created, so what gets signed can never drift from what was read. Editing your template later only affects new contracts.",
         "Track everything at a glance: Draft → Out for signature → Signed, with tick marks for who has signed. Unsigned contracts also show up in Reminders.",

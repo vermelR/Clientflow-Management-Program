@@ -68,38 +68,31 @@
   }
 
   /* ---------------- Contract template ----------------
-     The starting point every account gets, written the way a DJ
-     agreement normally reads. It's fully editable in Settings, and
-     {{placeholders}} are filled in from the client, gig and terms when
-     a contract is drawn up. Hoisted because sharedDefaults() runs at
-     load time, before any const in this file exists. */
+     Nobody is handed somebody else's agreement: an account starts with
+     no template at all, and the first contract walks you through
+     pasting in the one you already use or building an outline from
+     scratch. Hoisted because sharedDefaults() runs at load time,
+     before any const in this file exists. */
 
   function defaultContractTemplate() {
+    return { title: "", sections: [] };
+  }
+
+  // Standard section names for a services agreement — a scaffold to
+  // write into, with no wording of anyone else's in it.
+  function blankContractOutline() {
     return {
       title: "DJ Services Agreement",
       sections: [
-        {
-          heading: "The Parties",
-          body: `This agreement ("Agreement") is entered into as of {{agreementDate}}, by and between:
+        "The Parties", "Event Details", "Services", "Fees",
+        "Travel & Accommodation", "Cancellation Policy", "Force Majeure",
+        "Liability and Insurance", "Miscellaneous", "Agreement",
+      ].map(heading => ({ heading, body: "" })),
+    };
+  }
 
-{{businessName}} — {{ownerName}}
-Email: {{businessEmail}}
-Phone: {{businessPhone}}
-hereinafter referred to as the "DJ"
-
-Client — {{clientName}}
-Email: {{clientEmail}}
-Phone: {{clientPhone}}`,
-        },
-        {
-          heading: "Event Details",
-          body: `Event: {{eventTitle}}
-Event Date: {{eventDate}}
-Event Time: {{eventTime}}
-Event Location: {{eventVenue}}`,
-        },
-        {
-
+  function hasContractTemplate(t) {
+    return !!(t && Array.isArray(t.sections) && t.sections.some(sec => (sec.body || "").trim()));
   }
 
   // Convert flat legacy invoices ({items, discount}) to the RND
@@ -151,6 +144,33 @@ Event Location: {{eventVenue}}`,
     return { settings: defaultSettings(), clients: [], events: [], invoices: [], contracts: [] };
   }
 
+  /* An earlier build shipped a worked example as the starting contract.
+     It shouldn't be anyone's default — the agreement a DJ sends has to
+     be their own — so any account still carrying it untouched has it
+     cleared out on the way in, and is asked to bring their own instead.
+     The match is exact, so a template somebody has actually edited is
+     theirs and is left alone. Contracts already drawn up keep the
+     wording they froze at the time. */
+
+  // Hoisted, with its marks inside: load() runs before any const in
+  // this file exists, and reaching one from here would throw.
+  function isShippedSample(t) {
+    const marks = [
+      "The DJ will arrive 45\u201360 minutes before the set time to set up and perform a sound check.",
+      "an additional fee of up to 5% applies to cover transaction and processing fees",
+      "for 60 minutes afterwards to account for breakdown",
+    ];
+    if (!t || t.title !== "DJ Services Agreement" || !Array.isArray(t.sections)) return false;
+    if (t.sections.length !== 10) return false;
+    const all = t.sections.map(sec => sec.body || "").join("\n");
+    return marks.every(mark => all.includes(mark));
+  }
+
+  function dropShippedSample(settings) {
+    if (!isShippedSample(settings.contractTemplate)) return settings;
+    return { ...settings, contractTemplate: defaultContractTemplate() };
+  }
+
   function load() {
     const raw = localStorage.getItem(storageKey());
     if (!raw) return emptyState();
@@ -173,6 +193,7 @@ Event Location: {{eventVenue}}`,
       invoices: parsed.invoices || [],
       contracts: parsed.contracts || [],
     };
+    base.settings = dropShippedSample(base.settings);
     try {
       base.invoices = base.invoices.map(migrateInvoice);
     } catch (e) {
@@ -2428,8 +2449,10 @@ Event Location: {{eventVenue}}`,
       <div class="card card-pad" style="max-width:720px;margin-top:20px">
         <div class="card-title">📝 Contracts &amp; signing</div>
         <p class="settings-note">
-          Your agreement wording lives here. Every contract you draw up starts from it, with the client,
-          gig and fees merged in — then you sign, send a link, and the client signs on their own page.
+          Your own agreement lives here — ClientFlow doesn't come with one. Paste in the contract you
+          already use (or build one from a blank outline) and every contract you draw up starts from it,
+          with the client, gig and fees merged in. Then you sign, send a link, and the client signs on
+          their own page.
         </p>
         <div class="form-grid">
           <div class="field"><label>Contract prefix</label>
@@ -2455,10 +2478,13 @@ Event Location: {{eventVenue}}`,
         </div>
 
         <div class="sub-setting">
+          <div class="card-title" style="margin-bottom:8px">Your contract</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-            <button class="btn" id="openTemplate">✏️ Edit my contract template</button>
+            <button class="btn" id="openTemplate">${templateReady() ? "✏️ Edit my contract" : "📋 Add my contract"}</button>
             <span class="settings-note" style="margin:0">
-              ${(s.contractTemplate && s.contractTemplate.sections ? s.contractTemplate.sections.length : 0)} sections
+              ${templateReady()
+                ? `${(s.contractTemplate.sections || []).filter(sec => (sec.body || "").trim()).length} section${(s.contractTemplate.sections || []).filter(sec => (sec.body || "").trim()).length === 1 ? "" : "s"} written`
+                : "Not set up yet — takes a minute, once"}
             </span>
           </div>
         </div>
@@ -2625,7 +2651,8 @@ Event Location: {{eventVenue}}`,
 
     $("#openTemplate", root).addEventListener("click", () => {
       commitSettingsRef?.();
-      openTemplateEditor();
+      if (templateReady()) openTemplateEditor();
+      else openTemplateSetup();
     });
     $("#setSignature", root).addEventListener("click", () => {
       commitSettingsRef?.();
@@ -3546,8 +3573,10 @@ const firebaseConfig = {
 
   function contractTemplate() {
     const t = state.settings.contractTemplate;
-    return t && Array.isArray(t.sections) && t.sections.length ? t : defaultContractTemplate();
+    return t && Array.isArray(t.sections) ? t : defaultContractTemplate();
   }
+
+  function templateReady() { return hasContractTemplate(state.settings.contractTemplate); }
 
   /* ---------- Signatures ---------- */
 
@@ -3615,7 +3644,7 @@ const firebaseConfig = {
         <button type="button" class="btn btn-sm" id="sigClear">Clear</button>
       </div>
 
-      ${allowSave ? `<label class="comp-toggle" style="margin-top:14px;font-size:13.5px">
+      ${allowSave ? `<label class="comp-toggle wraps" style="margin-top:14px;font-size:13.5px">
         <input type="checkbox" id="sigRemember" checked> Remember this signature for future contracts
       </label>` : ""}
 
@@ -3753,6 +3782,7 @@ const firebaseConfig = {
 
     const awaiting = (state.contracts || []).filter(c => contractStatus(c) === "sent").length;
     const chips = [["all", "All"], ["draft", "Drafts"], ["sent", "Out for signature"], ["signed", "Signed"], ["void", "Void"]];
+    const ready = templateReady();
 
     root.innerHTML = `
       <div class="view-header">
@@ -3763,7 +3793,7 @@ const firebaseConfig = {
             : "Send an agreement, get it signed, keep the record"}</div>
         </div>
         <div class="header-actions">
-          <button class="btn" id="editTemplate">✏️ Edit my template</button>
+          <button class="btn" id="editTemplate">${ready ? "✏️ Edit my contract" : "📋 Add my contract"}</button>
           <button class="btn btn-primary" id="addContract">+ New contract</button>
         </div>
       </div>
@@ -3788,17 +3818,26 @@ const firebaseConfig = {
                 <td>${badge(contractStatus(ct))}</td>
               </tr>`).join("")}
           </tbody></table></div>`
-        : `<div class="empty-state"><div class="big">📝</div>
-             <p>No contracts yet. Draw one up from your template and send it for signature.</p>
-             <button class="btn btn-primary" id="emptyAddContract">+ New contract</button>
-             <button class="btn" id="emptyEditTemplate">✏️ Edit my template first</button>
-           </div>`}
+        : ready
+          ? `<div class="empty-state"><div class="big">📝</div>
+               <p>No contracts yet. Draw one up from your wording and send it for signature.</p>
+               <button class="btn btn-primary" id="emptyAddContract">+ New contract</button>
+               <button class="btn" id="emptyEditTemplate">✏️ Edit my contract</button>
+             </div>`
+          : `<div class="empty-state"><div class="big">📝</div>
+               <p><strong>Add your contract to get started.</strong><br>
+               ClientFlow doesn't come with one of its own — paste in the agreement you already use,
+               or build one from a blank outline. You only do this once.</p>
+               <button class="btn btn-primary" id="emptyEditTemplate">📋 Add my contract</button>
+             </div>`}
       </div>`;
 
     $("#addContract", root).addEventListener("click", () => openContractForm());
     $("#emptyAddContract", root)?.addEventListener("click", () => openContractForm());
-    $("#editTemplate", root).addEventListener("click", () => openTemplateEditor());
-    $("#emptyEditTemplate", root)?.addEventListener("click", () => openTemplateEditor());
+    $("#editTemplate", root).addEventListener("click", () =>
+      templateReady() ? openTemplateEditor() : openTemplateSetup());
+    $("#emptyEditTemplate", root)?.addEventListener("click", () =>
+      templateReady() ? openTemplateEditor() : openTemplateSetup());
     $$("[data-cfilter]", root).forEach(ch => ch.addEventListener("click", () => {
       contractFilter = ch.dataset.cfilter;
       renderContracts(root);
@@ -3808,6 +3847,9 @@ const firebaseConfig = {
   }
 
   function openContractForm(id, preset = {}) {
+    // Nothing to draw a contract from yet: set the wording up first and
+    // come straight back here.
+    if (!templateReady()) { openTemplateSetup(() => openContractForm(id, preset)); return; }
     const ct = id ? contractById(id) : null;
     if (ct && contractLocked(ct)) {
       toast(contractSigned(ct) ? "A signed contract can't be edited" : "This contract is void");
@@ -3880,7 +3922,7 @@ const firebaseConfig = {
           <button type="button" class="btn" id="previewContract">👁 Preview</button>
           <button type="submit" class="btn btn-primary">${ct ? "Save changes" : "Create contract"}</button>
         </div>
-      </form>`, true));
+      </form>`), true);
 
     const form = $("#contractForm");
 
@@ -3913,6 +3955,19 @@ const firebaseConfig = {
       return draft;
     }
 
+    // Picking a gig brings its fee across, so the contract quotes the
+    // number already agreed. Anything typed by hand is left alone.
+    let gigFee = ev && ev.fee != null ? String(ev.fee) : "";
+    form.eventId.addEventListener("change", () => {
+      const picked = form.eventId.value ? eventById(form.eventId.value) : null;
+      const nextFee = picked && picked.fee != null && picked.fee !== "" ? String(picked.fee) : "";
+      const current = form.fee.value.trim();
+      if (current === "" || current === gigFee) form.fee.value = nextFee;
+      gigFee = nextFee;
+      // The client follows the gig unless one is already chosen.
+      if (picked && picked.clientId && !form.clientId.value) form.clientId.value = picked.clientId;
+    });
+
     $("#cancelContract").addEventListener("click", () => (ct ? openContractDetail(id) : closeModal()));
     $("#formEditTemplate").addEventListener("click", () =>
       openTemplateEditor(() => openContractForm(id, { ...preset, ...collect() })));
@@ -3924,7 +3979,7 @@ const firebaseConfig = {
         <div class="doc-preview">${contractDocHtml(draft)}</div>
         <div class="modal-actions">
           <button class="btn btn-primary" id="backToContract">← Back to the form</button>
-        </div>`, true));
+        </div>`), true);
       // Carry the typed values back so a look at the preview never
       // costs someone the form they just filled in.
       $("#backToContract").addEventListener("click", () => openContractForm(id, { ...preset, ...typed }));
@@ -4024,7 +4079,7 @@ const firebaseConfig = {
         ${status !== "void" ? `<button class="btn" id="ctShare">🔗 ${live ? "Signing link" : "Get signing link"}</button>` : ""}
         ${contractLocked(ct) ? "" : `<button class="btn" id="ctEdit">Edit</button>`}
         ${status === "void" ? "" : `<button class="btn btn-danger" id="ctVoid">Void</button>`}
-      </div>`, true));
+      </div>`), true);
 
     $("#ctPrint").addEventListener("click", () => printContract(ct));
     $("#ctEdit")?.addEventListener("click", () => openContractForm(id));
@@ -4447,23 +4502,142 @@ const firebaseConfig = {
 
   /* ---------- Template editor ---------- */
 
-  function openTemplateEditor(onDone) {
-    const template = JSON.parse(JSON.stringify(contractTemplate()));
+  /* Turns a contract pasted out of Word, Google Docs or a PDF into
+     sections. Numbered or short title-ish lines become headings and
+     everything under them becomes that section's wording; if nothing
+     looks like a heading it all stays as one block, which is still
+     perfectly usable. */
+  function parsePastedContract(text) {
+    const lines = String(text || "").replace(/\r\n?/g, "\n").split("\n");
+    const sections = [];
+    let current = null;
+
+    const isHeading = line => {
+      const t = line.trim();
+      if (!t || t.length > 80) return false;
+      // "1. THE PARTIES." / "2) Event Details:" / "Section 4 — Fees"
+      if (/^\s*(\d{1,2}|[ivxIVX]{1,4})\s*[.)]\s+\S/.test(t)) return true;
+      // "Fees:" on its own line
+      if (/^[A-Z][^.!?]{2,60}:$/.test(t)) return true;
+      // "CANCELLATION POLICY"
+      if (/^[A-Z0-9 &'(),./-]{4,60}$/.test(t) && /[A-Z]{3}/.test(t)) return true;
+      return false;
+    };
+
+    const cleanHeading = line => line.trim()
+      .replace(/^\s*(\d{1,2}|[ivxIVX]{1,4})\s*[.)]\s*/, "")
+      .replace(/[:.]\s*$/, "")
+      .trim();
+
+    lines.forEach(line => {
+      // Page furniture from a PDF copy-paste.
+      if (/^\s*--+\s*\d+\s+of\s+\d+\s*--+\s*$/i.test(line)) return;
+      if (isHeading(line)) {
+        current = { heading: cleanHeading(line), body: "" };
+        sections.push(current);
+        return;
+      }
+      if (!current) { current = { heading: "", body: "" }; sections.push(current); }
+      current.body += (current.body ? "\n" : "") + line;
+    });
+
+    const tidied = sections
+      .map(sec => ({ heading: sec.heading, body: sec.body.replace(/\n{3,}/g, "\n\n").trim() }))
+      .filter(sec => sec.heading || sec.body);
+
+    if (!tidied.length) return null;
+    if (tidied.length === 1 && !tidied[0].heading) tidied[0].heading = "Agreement";
+    return { title: "", sections: tidied };
+  }
+
+  // First run: nobody is handed a ready-made contract, so this asks how
+  // they want to start — from the one they already use, or from scratch.
+  function openTemplateSetup(onDone) {
+    openModal(modalShell("Set up your contract", `
+      <p class="settings-note">
+        ClientFlow doesn't come with a contract of its own — the agreement you send should be yours.
+        Start from the one you already use, or build one here.
+      </p>
+
+      <div class="setup-choices">
+        <button class="setup-choice" id="setupPaste">
+          <span class="setup-icon">📋</span>
+          <span>
+            <strong>Paste the contract I already use</strong>
+            <span>Copy it out of Word, Google Docs or a PDF and drop it in. It gets split into
+            sections you can edit, and you can keep as much or as little as you like.</span>
+          </span>
+        </button>
+        <button class="setup-choice" id="setupBlank">
+          <span class="setup-icon">✏️</span>
+          <span>
+            <strong>Start from a blank outline</strong>
+            <span>The usual section headings — parties, event details, services, fees, cancellation
+            and so on — with nothing written in them. You fill in the wording.</span>
+          </span>
+        </button>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn" id="setupCancel">Cancel</button>
+      </div>`));
+
+    $("#setupCancel").addEventListener("click", () => (onDone ? onDone() : closeModal()));
+    $("#setupBlank").addEventListener("click", () => openTemplateEditor(onDone, blankContractOutline()));
+    $("#setupPaste").addEventListener("click", () => openPasteContract(onDone));
+  }
+
+  function openPasteContract(onDone) {
+    openModal(modalShell("Paste your contract", `
+      <p class="settings-note">
+        Paste the whole thing. Numbered or titled lines become section headings, everything else
+        becomes the wording underneath — you can fix anything that lands in the wrong place on the
+        next screen.
+      </p>
+      <div class="notes-box" style="margin-bottom:12px">
+        <strong>Tip:</strong> where your contract names a particular client, date or fee, you can
+        swap that bit for a placeholder like <code>{{clientName}}</code> or <code>{{fee}}</code> and
+        ClientFlow will fill it in on every contract. There's a full list on the next screen, and you
+        can do it later just as easily.
+      </div>
+      <div class="field full">
+        <label>Your contract</label>
+        <textarea id="pasteBox" rows="14" placeholder="Paste here…"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="pasteBack">← Back</button>
+        <button class="btn btn-primary" id="pasteUse">Use this contract</button>
+      </div>`), true);
+
+    $("#pasteBox").focus();
+    $("#pasteBack").addEventListener("click", () => openTemplateSetup(onDone));
+    $("#pasteUse").addEventListener("click", () => {
+      const parsed = parsePastedContract($("#pasteBox").value);
+      if (!parsed) { toast("Paste your contract in first"); $("#pasteBox").focus(); return; }
+      openTemplateEditor(onDone, parsed);
+      toast(`Split into ${parsed.sections.length} section${parsed.sections.length === 1 ? "" : "s"} — have a look through`);
+    });
+  }
+
+  function openTemplateEditor(onDone, startFrom) {
+    const template = JSON.parse(JSON.stringify(startFrom || contractTemplate()));
+    if (!template.sections.length) template.sections = [{ heading: "", body: "" }];
+    let lastFocused = null;
 
     function body() {
       return `
         <p class="settings-note">
-          This is the wording every new contract starts from. Write it the way you write it today —
-          paste in your own clauses if you have them. Anything in
-          <code>{{double braces}}</code> is filled in per contract.
+          This is your contract — the wording every new one starts from. Write it the way you write it
+          today, and anything in <code>{{double braces}}</code> is filled in per contract, so you only
+          write it once.
         </p>
 
-        <details class="merge-help">
-          <summary>What you can drop in</summary>
-          <ul>
-            ${MERGE_FIELDS.map(([k, what]) => `<li><code>{{${k}}}</code> — ${escapeHtml(what)}</li>`).join("")}
-          </ul>
-        </details>
+        <div class="merge-chips-hint">
+          Click into any section, then tap a placeholder to drop it in where the cursor is:
+        </div>
+        <div class="merge-chips">
+          ${MERGE_FIELDS.map(([k, what]) => `<button type="button" class="merge-chip" data-merge="${k}" title="${escapeHtml(what)}">{{${k}}}</button>`).join("")}
+        </div>
 
         <div class="field full" style="margin-top:14px">
           <label>Contract title</label>
@@ -4487,21 +4661,36 @@ const firebaseConfig = {
         <button type="button" class="btn btn-sm btn-ghost" id="tplAdd">+ Add a section</button>
 
         <div class="modal-actions" style="flex-wrap:wrap">
-          <button type="button" class="btn btn-danger" id="tplReset">Reset to the standard wording</button>
+          <button type="button" class="btn btn-danger" id="tplReset">Start over</button>
           <button type="button" class="btn" id="tplCancel">Cancel</button>
           <button type="button" class="btn btn-primary" id="tplSave">Save template</button>
         </div>`;
     }
 
     function mount() {
-      openModal(modalShell("Your contract template", body(), true), true);
+      openModal(modalShell("Your contract template", body()), true);
 
       $("#tplTitle").addEventListener("input", e => { template.title = e.target.value; });
       $$(".tpl-heading").forEach(el => el.addEventListener("input", () => {
         template.sections[Number(el.dataset.i)].heading = el.value;
       }));
-      $$(".tpl-body").forEach(el => el.addEventListener("input", () => {
+      $$(".tpl-body").forEach(el => {
+        el.addEventListener("input", () => { template.sections[Number(el.dataset.i)].body = el.value; });
+        el.addEventListener("focus", () => { lastFocused = el; });
+      });
+
+      // Drop a placeholder in at the cursor of whichever section was
+      // last being written in.
+      $$(".merge-chip").forEach(chip => chip.addEventListener("click", () => {
+        const el = lastFocused && document.body.contains(lastFocused) ? lastFocused : $(".tpl-body");
+        if (!el) return;
+        const token = `{{${chip.dataset.merge}}}`;
+        const at = el.selectionStart ?? el.value.length;
+        el.value = el.value.slice(0, at) + token + el.value.slice(el.selectionEnd ?? at);
         template.sections[Number(el.dataset.i)].body = el.value;
+        el.focus();
+        el.setSelectionRange(at + token.length, at + token.length);
+        lastFocused = el;
       }));
       $$("[data-tpl-del]").forEach(b => b.addEventListener("click", () => {
         template.sections.splice(Number(b.dataset.tplDel), 1);
@@ -4523,16 +4712,13 @@ const firebaseConfig = {
         mount();
       });
       $("#tplReset").addEventListener("click", () => {
-        if (!confirm("Replace your wording with the standard template? Contracts you've already created keep their own wording.")) return;
-        state.settings.contractTemplate = defaultContractTemplate();
-        save();
-        openTemplateEditor(onDone);
-        toast("Template reset");
+        if (!confirm("Start this template again from scratch? Contracts you've already created keep their own wording.")) return;
+        openTemplateSetup(onDone);
       });
       $("#tplCancel").addEventListener("click", () => (onDone ? onDone() : closeModal()));
       $("#tplSave").addEventListener("click", () => {
         state.settings.contractTemplate = {
-          title: (template.title || "Agreement").trim(),
+          title: (template.title || "DJ Services Agreement").trim(),
           sections: template.sections
             .map(sec => ({ heading: (sec.heading || "").trim(), body: (sec.body || "").trim() }))
             .filter(sec => sec.heading || sec.body),
@@ -5604,12 +5790,13 @@ const firebaseConfig = {
   function remoteToState(data) {
     const keptLocal = {};
     LOCAL_ONLY_SETTINGS.forEach(k => { keptLocal[k] = state.settings[k]; });
+    const contracts = data.contracts || [];
     return {
-      settings: { ...defaultSettings(), ...(data.settings || {}), ...keptLocal },
+      settings: dropShippedSample({ ...defaultSettings(), ...(data.settings || {}), ...keptLocal }),
       clients: data.clients || [],
       events: data.events || [],
       invoices: (data.invoices || []).map(migrateInvoice),
-      contracts: data.contracts || [],
+      contracts,
     };
   }
 
