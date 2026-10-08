@@ -99,69 +99,7 @@ Event Time: {{eventTime}}
 Event Location: {{eventVenue}}`,
         },
         {
-          heading: "Services",
-          body: `The DJ will provide music for the event using their own DJ equipment, which includes a DJ controller, mixer, laptop and music library. The music selection will be based on the client's preferences and will be discussed and agreed upon prior to the event. The DJ will also make announcements throughout the duration of the event unless a separate emcee is provided.
 
-The DJ will also provide sound equipment, including speakers and subwoofers (if disclosed), so the music is heard clearly throughout the event space. The number of speakers and subwoofers provided will be adjusted to the size of the space and the number of guests, and will be agreed upon prior to the event.
-
-The DJ requires access to power outlets to connect and power their equipment. If the venue has no power available, the client is responsible for providing a generator or other power source. The DJ requires a 6-foot table in each room an event is held in.
-
-If the event is held outdoors, the client must provide a covering or tent over the DJ area so the equipment is protected.
-
-The DJ will arrive 45–60 minutes before the set time to set up and perform a sound check.
-
-If you have any additional requests or preferences for the music selection or sound equipment, let us know and we will do our best to accommodate them.`,
-        },
-        {
-          heading: "Fees",
-          body: `The fee for {{businessName}}'s services for this event is {{fee}}. Payment can be made by cash or check. If the client prefers to pay by credit card, that can be discussed with the DJ; an additional fee of up to 5% applies to cover transaction and processing fees.
-
-A deposit of {{depositPercent}} of the total fee is required to secure the booking, and must be paid no later than 5 business days after signing this contract. The balance is due on or before the day of the event.
-
-Late payments may be subject to late fees of up to 10% of the contracted amount per day late.
-
-Any additional time exceeding the agreed performance duration by more than 10 minutes will be charged at {{overtimeRate}} per hour unless agreed otherwise. The client acknowledges and agrees to this provision by signing this contract.
-
-If parking is not available onsite for oversized vehicles, reimbursement is required.`,
-        },
-        {
-          heading: "Travel & Accommodation",
-          body: `{{hotelClause}}
-
-The client is responsible for arranging adequate parking for the DJ where the venue and/or hotel does not provide it, and for any parking fees during the event timeline.`,
-        },
-        {
-          heading: "Cancellation Policy",
-          body: `The client may cancel the DJ's services up to {{cancelWindow}} before the scheduled start time without incurring a cancellation fee. If the client cancels less than {{cancelWindow}} before the scheduled start time, the client is responsible for a cancellation fee equal to {{cancelPercent}} of the agreed price.
-
-The cancellation fee is due within 10 days of the cancellation notice, and the DJ may withhold any deposit or prepayment made by the client to cover it.`,
-        },
-        {
-          heading: "Force Majeure",
-          body: `Neither party is liable for any delay or failure to perform due to causes beyond their reasonable control, including but not limited to acts of God, war, strikes or natural disasters.`,
-        },
-        {
-          heading: "Liability and Insurance",
-          body: `Proof of vendor liability insurance can be provided to the client on request.
-
-The client is responsible for providing overhead coverage for the DJ setup area if the location is outdoors.
-
-The client is responsible for any injury and/or damage caused to {{businessName}}'s equipment, property or performers by the client or the client's guests, during the event and for 60 minutes afterwards to account for breakdown.`,
-        },
-        {
-          heading: "Miscellaneous",
-          body: `a.) Photo/Video Consent. The DJ and team may take photographs or video of the event for promotional purposes unless the client requests otherwise in writing.
-
-b.) Requests. The DJ will make reasonable efforts to play music requests but makes no guarantee that specific songs will be available.
-
-c.) In case of an unforeseen emergency or personal reason, the DJ reserves the right to substitute the performer(s) assigned to the event.`,
-        },
-        {
-          heading: "Agreement",
-          body: `By signing below, the client agrees to the terms and conditions set out in this contract and confirms their booking of the DJ for this event.`,
-        },
-      ],
-    };
   }
 
   // Convert flat legacy invoices ({items, discount}) to the RND
