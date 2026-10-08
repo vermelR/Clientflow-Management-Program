@@ -6,6 +6,35 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // --- helpers -----------------------------------------------------
+
+    function ownsExisting() {
+      return request.auth != null
+             && resource.data.ownerUid == request.auth.uid;
+    }
+
+    function ownsIncoming() {
+      return request.auth != null
+             && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    // The client's one-time signing write on a contract: the contract
+    // must still be open, and the write may only add the signature.
+    function isClientSigning() {
+      return resource.data.get('revoked', false) != true
+             && resource.data.get('voided', false) != true
+             && resource.data.get('clientSigned', false) != true
+             && request.resource.data.clientSigned == true
+             && request.resource.data.diff(resource.data).affectedKeys()
+                  .hasOnly(['clientSigned', 'clientSignature', 'updatedAtMs'])
+             && request.resource.data.clientSignature.name is string
+             && request.resource.data.clientSignature.name.size() > 0
+             && request.resource.data.clientSignature.name.size() <= 120
+             && request.resource.data.clientSignature.get('dataUrl', '').size() <= 80000;
+    }
+
+    // --- the account's own data --------------------------------------
+
     match /djclientflow/{userId} {
       allow read, write: if request.auth != null
                          && request.auth.uid == userId;
@@ -17,21 +46,32 @@ service cloud.firestore {
       }
     }
 
-    // Quotes and invoices shared with a client on a live link. The link
-    // holds a long random id and that id is the only way in: a client
-    // can fetch the one document they were sent, and nothing can list
-    // the collection to go looking for others. Only the DJ who owns a
-    // shared document can create, change or switch it off.
+    // --- quotes and invoices shared on a live link --------------------
+    // The link holds a long random id and that id is the only way in: a
+    // client can fetch the one document they were sent, and nothing can
+    // list the collection to go looking for others. Only the DJ who owns
+    // a shared document can create, change or switch it off.
+
     match /shared/{shareId} {
       allow get: if true;
       allow list: if false;
-      allow create: if request.auth != null
-                    && request.resource.data.ownerUid == request.auth.uid;
-      allow update: if request.auth != null
-                    && resource.data.ownerUid == request.auth.uid
-                    && request.resource.data.ownerUid == request.auth.uid;
-      allow delete: if request.auth != null
-                    && resource.data.ownerUid == request.auth.uid;
+      allow create: if ownsIncoming();
+      allow update: if ownsExisting() && ownsIncoming();
+      allow delete: if ownsExisting();
+    }
+
+    // --- contracts sent out for signature -----------------------------
+    // Read works the same way. On top of that there is exactly one write
+    // an unsigned-in visitor may make: adding their signature, once, to
+    // a contract that is still live and unsigned. Nothing else about the
+    // document can be touched without being the owner.
+
+    match /contracts/{contractId} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if ownsIncoming();
+      allow delete: if ownsExisting();
+      allow update: if (ownsExisting() && ownsIncoming()) || isClientSigning();
     }
 
     // Anything else is denied.

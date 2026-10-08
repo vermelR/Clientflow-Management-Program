@@ -960,3 +960,147 @@ tr.row-hotel td.hotel-label { font-weight: 700; color: #e85d26; font-size: 13px;
   body.quote-body .quote-doc .rnd-doc { width: 100%; box-shadow: none; }
   body.quote-body .quote-top, body.quote-body .quote-foot { display: none !important; }
 }
+
+/* ---------- Contracts & signatures ---------- */
+.tick { color: var(--green); font-weight: 800; }
+.tick.off { color: var(--border); }
+
+.sign-status {
+  border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden; margin-bottom: 16px; background: var(--card);
+}
+.sign-status-row {
+  display: flex; align-items: center; gap: 12px; padding: 13px 16px;
+}
+.sign-status-row + .sign-status-row { border-top: 1px solid var(--border); }
+.sign-status-row.done { background: var(--green-soft); }
+.sign-status-row > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sign-status-row strong { font-size: 13.5px; }
+.sign-status-row span { font-size: 12.5px; color: var(--muted); }
+.sign-status-row.done span { color: #2b6f54; }
+.sign-status-row .btn { margin-left: auto; flex-shrink: 0; }
+.sign-step {
+  width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
+  background: var(--gray-soft); color: var(--muted);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 800;
+}
+.sign-status-row.done .sign-step { background: var(--green); color: #fff; }
+.warn-strip { background: var(--gray-soft); color: var(--muted); }
+
+.badge-signed { background: var(--green-soft); color: var(--green); }
+.badge-void { background: var(--gray-soft); color: var(--muted); text-decoration: line-through; }
+
+/* Signature pad (in the app and on the client's page) */
+.sig-tabs { display: flex; gap: 8px; }
+.sig-preview {
+  border: 1px dashed var(--border); border-radius: 10px; background: var(--bg);
+  min-height: 86px; display: flex; align-items: center; justify-content: center;
+  margin: 14px 0 6px; padding: 10px 16px; overflow: hidden;
+}
+.sig-typed {
+  font-family: "Segoe Script", "Brush Script MT", "Snell Roundhand", cursive;
+  font-size: 34px; line-height: 1.3; color: #13100e; white-space: nowrap;
+}
+.sig-empty { font-size: 13px; color: var(--muted); font-style: italic; }
+.sig-pad-wrap {
+  position: relative; border: 1px dashed var(--border); border-radius: 10px;
+  background: #fff; margin: 14px 0 10px; overflow: hidden;
+}
+.sig-pad-wrap canvas { display: block; width: 100%; height: 170px; touch-action: none; cursor: crosshair; }
+.sig-pad-hint {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 13px; color: var(--muted); pointer-events: none; font-style: italic;
+}
+/* A sentence, not a chip label: it has to wrap on a phone. */
+.sign-agree {
+  margin-top: 16px; font-size: 13.5px; display: flex; gap: 9px;
+  align-items: flex-start; white-space: normal; line-height: 1.5;
+}
+.sign-agree input { margin-top: 2px; flex-shrink: 0; }
+.sig-saved { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.sig-saved-mark {
+  border: 1px solid var(--border); border-radius: 8px; background: #fff;
+  padding: 4px 16px; min-width: 150px; display: flex; align-items: center; justify-content: center;
+}
+.sig-saved-mark .sig-typed { font-size: 26px; }
+.sig-saved-mark .sig-img { max-height: 46px; }
+
+/* Template editor */
+.merge-help { font-size: 12.5px; color: var(--muted); margin-top: 10px; }
+.merge-help summary { cursor: pointer; font-weight: 600; color: var(--text); }
+.merge-help ul { margin: 10px 0 0 18px; line-height: 1.9; }
+.merge-help code, .settings-note code {
+  background: var(--gray-soft); border-radius: 4px; padding: 1px 5px;
+  font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.tpl-section { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-top: 12px; background: var(--card); }
+.tpl-head { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.tpl-num {
+  width: 22px; height: 22px; border-radius: 50%; background: var(--gray-soft); color: var(--muted);
+  display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 800; flex-shrink: 0;
+}
+.tpl-head input { flex: 1; min-width: 0; font-weight: 600; }
+.tpl-section textarea { width: 100%; font-family: inherit; font-size: 13px; line-height: 1.6; }
+.tpl-head .remove-line:disabled { opacity: 0.3; cursor: default; }
+
+/* ---------- The agreement document ---------- */
+.agr-doc {
+  width: 816px; background: #fff; color: #222;
+  font-family: "Segoe UI", Arial, sans-serif; font-size: 13px;
+}
+.doc-preview .agr-doc { margin: 0 auto; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2); }
+.agr-head {
+  background: #111; color: #fff; padding: 30px 44px 26px;
+  display: flex; justify-content: space-between; align-items: center; gap: 20px;
+}
+.agr-biz { font-size: 13px; color: #ccc; letter-spacing: 1px; }
+.agr-title { font-size: 34px; font-weight: 300; letter-spacing: -0.5px; margin-top: 4px; }
+.agr-logo {
+  font-family: Impact, "Arial Black", sans-serif; font-size: 42px; letter-spacing: -2px;
+  color: #fff; text-shadow: 3px 0 0 #e85d26, -3px 0 0 #3b7dd8;
+  transform: skewX(-8deg); height: 62px; display: flex; align-items: center;
+}
+.agr-logo img { height: 100%; width: auto; max-width: 170px; object-fit: contain; transform: skewX(8deg); }
+.agr-meta {
+  display: flex; gap: 26px; padding: 12px 44px; border-bottom: 2px solid #ddd;
+  font-size: 12.5px; color: #444; flex-wrap: wrap;
+}
+.agr-executed { color: #27ae60; font-weight: 800; letter-spacing: 0.04em; }
+.agr-void { color: #c0392b; font-weight: 800; letter-spacing: 0.04em; }
+.agr-body { padding: 26px 44px 10px; }
+.agr-section { margin-bottom: 20px; }
+.agr-section h3 {
+  font-size: 13.5px; color: #e85d26; margin-bottom: 7px;
+  border-bottom: 1.5px solid #3b7dd8; padding-bottom: 5px;
+}
+.agr-section p { font-size: 12.5px; line-height: 1.75; color: #333; }
+.agr-signatures {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 36px;
+  padding: 18px 44px 34px; border-top: 2px solid #ddd; margin-top: 10px;
+}
+.sig-block { min-width: 0; }
+.sig-mark {
+  height: 62px; display: flex; align-items: flex-end; padding-bottom: 4px; overflow: hidden;
+}
+.sig-mark .sig-typed { font-size: 30px; }
+.sig-img { max-height: 58px; max-width: 100%; object-fit: contain; }
+.sig-rule { border-bottom: 1px solid #333; }
+.sig-meta { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; font-size: 11.5px; color: #555; }
+.sig-meta strong { font-size: 12px; color: #222; }
+
+.sign-card { border-color: var(--accent); }
+.signed-card { border-color: var(--green); background: var(--green-soft); }
+.signed-card h2 { color: var(--green); }
+.signed-card p { color: #2b6f54; }
+
+@media (max-width: 880px) {
+  .quote-doc .agr-doc { width: 100%; }
+  .quote-doc .agr-head { padding: 22px 20px; }
+  .quote-doc .agr-title { font-size: 26px; }
+  .quote-doc .agr-logo { font-size: 30px; height: 48px; }
+  .quote-doc .agr-meta { gap: 10px 18px; padding: 12px 20px; }
+  .quote-doc .agr-body { padding: 20px 20px 6px; }
+  .quote-doc .agr-signatures { grid-template-columns: 1fr; gap: 26px; padding: 16px 20px 26px; }
+  .sig-typed { font-size: 26px; white-space: normal; }
+}

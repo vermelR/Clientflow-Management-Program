@@ -20,6 +20,7 @@ Run it for yourself, or [host it for many DJs](#cloud-sync-and-multi-user-setup)
 
   Printed and emailed invoices show every payment received and the remaining balance, so a client who paid a deposit sees exactly what's still owed.
 - **🔗 Live quote links** — open any quote or invoice and hit **Share live link**: ClientFlow publishes it to a private page at a long, unguessable address and gives you the link to copy, text, or email (via Gmail or your mail app). From then on the page keeps itself current — change a price, add a package, log a deposit, and what they're looking at updates on its own, even if they already have it open. No re-sending, no "ignore the last PDF". They see the quote and what's still owed; they never see your other clients or your internal notes. One click switches the link off again, and old links politely explain they're no longer active. Requires cloud sync (see below).
+- **📝 Contracts & e-signing** — keep your own agreement wording in Settings (the app ships with a full DJ contract you can edit clause by clause) and draw one up per gig in seconds: the client, venue, dates, fee, deposit, overtime rate and cancellation terms are merged in from records you already have. Sign it yourself — typed or drawn with a mouse or finger — then send the client a private link. They read it, sign on their phone or laptop, and the signature lands back in the app on its own, timestamped and stored against the contract. The wording is frozen the moment a contract is created, so what gets signed can never drift from what was read. Statuses track the whole thing: Draft → Out for signature → Signed, with a Void option and a withdraw-the-link button. Requires cloud sync.
 - **🔔 Reminders** — a discreet pill in the corner of every screen opens a panel showing what's coming up in the next 30 days, closest first, with each gig's payment state at a glance (Paid / balance left / unpaid / not invoiced) plus any overdue invoices. The badge counts only what still needs attention, so it disappears when you're all square.
 - **Calendar** — month view of all your gigs, color-coded by status
 - **📅 Calendly scheduling** — paste your Calendly link in Settings and a **Send booking link** button appears on every client and gig. Email it to them (via Gmail or your mail app) or copy it to text over; their name and email are already filled in on the booking page, and a gig's details ride along as a note. *They* choose the time that suits them. Turn on **Show booked calls on your calendar** and whatever they pick appears on the Calendar page — see below.
@@ -131,6 +132,14 @@ Push the change and the live site now opens on a login screen. Anyone can create
 
 > Leave `firebase-config.js` untouched and the app simply keeps working in single-user mode, saving to the browser — handy for testing locally.
 
+### How contract signing works
+
+Each contract you send gets its own `contracts/{id}` document, published at a 32-character random link. The rules let anyone with the exact link read that one document — nothing can list the collection — and allow exactly **one** write without signing in: adding the client's signature, once, to a contract that is still live and unsigned. Any other change to the document is refused unless it comes from your account. Once signed, the contract can't be signed again, and withdrawing or voiding it closes the link for good.
+
+A typed signature is stored as the name itself; a drawn one as a small image. Both are kept with the date and time they were given, on the contract record in your account.
+
+That puts it on the same footing as the common e-signing services for an ordinary services agreement: the signer had the document in front of them, agreed to it explicitly, and the record shows what was signed and when. It is not a qualified/notarised signature, and it isn't legal advice — if a particular client or venue demands a specific signing standard, use whatever they require.
+
 ### How live quote links stay private
 
 A shared quote lives in its own `shared/{id}` document, separate from your account's data. The id is 32 random hex characters, and the rules allow fetching **one** document by its exact id — nothing can list the collection to go hunting for others. Only the account that created a shared document can change it or switch it off. The published copy carries the quote, your business details and what's been paid; it deliberately leaves out the client's own email and phone number and anything else in your database, because a link can always be forwarded.
@@ -157,4 +166,4 @@ The site is a PWA, so it installs like a native app and launches offline:
 
 ## 🛠 Tech
 
-Plain HTML, CSS and JavaScript — zero dependencies, zero build step. Easy to customize: colors live in `styles.css` (`:root` variables), all logic in `app.js`. The client-facing live quote page is its own small file (`quote.html` + `quote.js`) and shares the same stylesheet, so the quote a client opens looks exactly like the one you print.
+Plain HTML, CSS and JavaScript — zero dependencies, zero build step. Easy to customize: colors live in `styles.css` (`:root` variables), all logic in `app.js`. The client-facing pages are their own small files — `quote.html` + `quote.js` for a live quote, `contract.html` + `contract.js` for signing — and share the same stylesheet, so what a client opens looks exactly like what you print.

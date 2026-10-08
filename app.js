@@ -60,6 +60,107 @@
       firebaseConfig: null,
       calendlyUrl: "",
       showGoogleCalendar: false,
+      contractPrefix: "AGR-",
+      nextContractNumber: 1,
+      contractTemplate: defaultContractTemplate(),
+      signature: null,          // the DJ's saved signature, reused on every contract
+    };
+  }
+
+  /* ---------------- Contract template ----------------
+     The starting point every account gets, written the way a DJ
+     agreement normally reads. It's fully editable in Settings, and
+     {{placeholders}} are filled in from the client, gig and terms when
+     a contract is drawn up. Hoisted because sharedDefaults() runs at
+     load time, before any const in this file exists. */
+
+  function defaultContractTemplate() {
+    return {
+      title: "DJ Services Agreement",
+      sections: [
+        {
+          heading: "The Parties",
+          body: `This agreement ("Agreement") is entered into as of {{agreementDate}}, by and between:
+
+{{businessName}} — {{ownerName}}
+Email: {{businessEmail}}
+Phone: {{businessPhone}}
+hereinafter referred to as the "DJ"
+
+Client — {{clientName}}
+Email: {{clientEmail}}
+Phone: {{clientPhone}}`,
+        },
+        {
+          heading: "Event Details",
+          body: `Event: {{eventTitle}}
+Event Date: {{eventDate}}
+Event Time: {{eventTime}}
+Event Location: {{eventVenue}}`,
+        },
+        {
+          heading: "Services",
+          body: `The DJ will provide music for the event using their own DJ equipment, which includes a DJ controller, mixer, laptop and music library. The music selection will be based on the client's preferences and will be discussed and agreed upon prior to the event. The DJ will also make announcements throughout the duration of the event unless a separate emcee is provided.
+
+The DJ will also provide sound equipment, including speakers and subwoofers (if disclosed), so the music is heard clearly throughout the event space. The number of speakers and subwoofers provided will be adjusted to the size of the space and the number of guests, and will be agreed upon prior to the event.
+
+The DJ requires access to power outlets to connect and power their equipment. If the venue has no power available, the client is responsible for providing a generator or other power source. The DJ requires a 6-foot table in each room an event is held in.
+
+If the event is held outdoors, the client must provide a covering or tent over the DJ area so the equipment is protected.
+
+The DJ will arrive 45–60 minutes before the set time to set up and perform a sound check.
+
+If you have any additional requests or preferences for the music selection or sound equipment, let us know and we will do our best to accommodate them.`,
+        },
+        {
+          heading: "Fees",
+          body: `The fee for {{businessName}}'s services for this event is {{fee}}. Payment can be made by cash or check. If the client prefers to pay by credit card, that can be discussed with the DJ; an additional fee of up to 5% applies to cover transaction and processing fees.
+
+A deposit of {{depositPercent}} of the total fee is required to secure the booking, and must be paid no later than 5 business days after signing this contract. The balance is due on or before the day of the event.
+
+Late payments may be subject to late fees of up to 10% of the contracted amount per day late.
+
+Any additional time exceeding the agreed performance duration by more than 10 minutes will be charged at {{overtimeRate}} per hour unless agreed otherwise. The client acknowledges and agrees to this provision by signing this contract.
+
+If parking is not available onsite for oversized vehicles, reimbursement is required.`,
+        },
+        {
+          heading: "Travel & Accommodation",
+          body: `{{hotelClause}}
+
+The client is responsible for arranging adequate parking for the DJ where the venue and/or hotel does not provide it, and for any parking fees during the event timeline.`,
+        },
+        {
+          heading: "Cancellation Policy",
+          body: `The client may cancel the DJ's services up to {{cancelWindow}} before the scheduled start time without incurring a cancellation fee. If the client cancels less than {{cancelWindow}} before the scheduled start time, the client is responsible for a cancellation fee equal to {{cancelPercent}} of the agreed price.
+
+The cancellation fee is due within 10 days of the cancellation notice, and the DJ may withhold any deposit or prepayment made by the client to cover it.`,
+        },
+        {
+          heading: "Force Majeure",
+          body: `Neither party is liable for any delay or failure to perform due to causes beyond their reasonable control, including but not limited to acts of God, war, strikes or natural disasters.`,
+        },
+        {
+          heading: "Liability and Insurance",
+          body: `Proof of vendor liability insurance can be provided to the client on request.
+
+The client is responsible for providing overhead coverage for the DJ setup area if the location is outdoors.
+
+The client is responsible for any injury and/or damage caused to {{businessName}}'s equipment, property or performers by the client or the client's guests, during the event and for 60 minutes afterwards to account for breakdown.`,
+        },
+        {
+          heading: "Miscellaneous",
+          body: `a.) Photo/Video Consent. The DJ and team may take photographs or video of the event for promotional purposes unless the client requests otherwise in writing.
+
+b.) Requests. The DJ will make reasonable efforts to play music requests but makes no guarantee that specific songs will be available.
+
+c.) In case of an unforeseen emergency or personal reason, the DJ reserves the right to substitute the performer(s) assigned to the event.`,
+        },
+        {
+          heading: "Agreement",
+          body: `By signing below, the client agrees to the terms and conditions set out in this contract and confirms their booking of the DJ for this event.`,
+        },
+      ],
     };
   }
 
@@ -109,7 +210,7 @@
   let state = load();
 
   function emptyState() {
-    return { settings: defaultSettings(), clients: [], events: [], invoices: [] };
+    return { settings: defaultSettings(), clients: [], events: [], invoices: [], contracts: [] };
   }
 
   function load() {
@@ -132,6 +233,7 @@
       clients: parsed.clients || [],
       events: parsed.events || [],
       invoices: parsed.invoices || [],
+      contracts: parsed.contracts || [],
     };
     try {
       base.invoices = base.invoices.map(migrateInvoice);
@@ -309,6 +411,7 @@
   const STATUS_LABEL = {
     draft: "Draft", sent: "Sent", paid: "Paid", overdue: "Overdue", partial: "Partial",
     inquiry: "Inquiry", booked: "Booked", completed: "Completed", cancelled: "Cancelled",
+    signed: "Signed", void: "Void",
   };
 
   function badge(status) {
@@ -373,6 +476,7 @@
     clients: renderClients,
     events: renderEvents,
     invoices: renderInvoices,
+    contracts: renderContracts,
     calendar: renderCalendar,
     settings: renderSettings,
   };
@@ -555,6 +659,8 @@
       el.addEventListener("click", () => openInvoiceDetail(el.dataset.openInvoice)));
     $$("[data-open-client]", root).forEach(el =>
       el.addEventListener("click", () => openClientDetail(el.dataset.openClient)));
+    $$("[data-open-contract]", root).forEach(el =>
+      el.addEventListener("click", () => openContractDetail(el.dataset.openContract)));
   }
 
   /* ================= CLIENTS ================= */
@@ -669,6 +775,7 @@
     if (!c) return;
     const gigs = state.events.filter(e => e.clientId === id).sort((a, b) => b.date.localeCompare(a.date));
     const invs = state.invoices.filter(i => i.clientId === id).sort((a, b) => (b.issueDate || "").localeCompare(a.issueDate || ""));
+    const cts = (state.contracts || []).filter(ct => ct.clientId === id).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
     const paid = invs.reduce((s, i) => s + invPaid(i), 0);
     const owed = invs.filter(i => i.status !== "draft").reduce((s, i) => s + Math.max(0, invBalance(i)), 0);
 
@@ -699,8 +806,18 @@
         </tr>`).join("")}
       </tbody></table></div>` : `<div class="notes-box">No invoices yet for this client.</div>`}
 
+      <div class="section-label">Contracts (${cts.length})</div>
+      ${cts.length ? `<div class="table-wrap"><table><tbody>
+        ${cts.map(ct => `<tr class="clickable" data-open-contract="${ct.id}">
+          <td class="nowrap">${escapeHtml(ct.number || "—")}</td>
+          <td>${escapeHtml(ct.title || "Agreement")}</td>
+          <td>${badge(contractStatus(ct))}</td>
+        </tr>`).join("")}
+      </tbody></table></div>` : `<div class="notes-box">No contracts yet for this client.</div>`}
+
       <div class="modal-actions" style="flex-wrap:wrap">
         <button class="btn" id="detailScheduleCall">📅 Send booking link</button>
+        <button class="btn" id="detailNewContract">📝 New contract</button>
         <button class="btn" id="detailNewGig">+ Gig for this client</button>
         <button class="btn" id="detailUploadInv">📎 Add existing invoice</button>
         <button class="btn" id="detailNewInv">+ Invoice</button>
@@ -712,6 +829,7 @@
     $("#detailNewInv").addEventListener("click", () => openInvoiceForm(null, { clientId: id }));
     $("#detailUploadInv").addEventListener("click", () => openUploadInvoiceForm(null, { clientId: id }));
     $("#detailScheduleCall").addEventListener("click", () => openBookingLinkModal({ clientId: id }));
+    $("#detailNewContract").addEventListener("click", () => openContractForm(null, { clientId: id }));
     bindRowOpeners($("#modal"));
   }
 
@@ -889,6 +1007,7 @@
     if (!e) return;
     const c = clientById(e.clientId);
     const invs = state.invoices.filter(i => i.eventId === id);
+    const cts = (state.contracts || []).filter(ct => ct.eventId === id);
 
     openModal(modalShell(e.title, `
       <div style="margin-bottom:14px">${badge(e.status)}</div>
@@ -907,8 +1026,13 @@
         <div class="table-wrap"><table><tbody>${invs.map(i => `
           <tr class="clickable" data-open-invoice="${i.id}"><td>${escapeHtml(i.number)}</td><td class="right">${money(invTotal(i))}</td><td>${badge(invStatus(i))}</td></tr>`).join("")}
         </tbody></table></div>` : ""}
+      ${cts.length ? `<div class="section-label">Contracts</div>
+        <div class="table-wrap"><table><tbody>${cts.map(ct => `
+          <tr class="clickable" data-open-contract="${ct.id}"><td>${escapeHtml(ct.number || "—")}</td><td>${escapeHtml(ct.title || "Agreement")}</td><td>${badge(contractStatus(ct))}</td></tr>`).join("")}
+        </tbody></table></div>` : ""}
       <div class="modal-actions" style="flex-wrap:wrap">
         <button class="btn" id="evScheduleCall">📅 Send booking link</button>
+        <button class="btn" id="evContract">📝 ${cts.length ? "Another contract" : "Create contract"}</button>
         <button class="btn" id="evUploadInvoice">📎 Add existing invoice</button>
         <button class="btn" id="evInvoice">Create invoice for this gig</button>
         <button class="btn btn-primary" id="evEdit">Edit gig</button>
@@ -918,6 +1042,7 @@
     $("#evInvoice").addEventListener("click", () => openInvoiceForm(null, { clientId: e.clientId, eventId: id }));
     $("#evUploadInvoice").addEventListener("click", () => openUploadInvoiceForm(null, { clientId: e.clientId, eventId: id }));
     $("#evScheduleCall").addEventListener("click", () => openBookingLinkModal({ clientId: e.clientId, eventId: id }));
+    $("#evContract").addEventListener("click", () => openContractForm(null, { clientId: e.clientId, eventId: id }));
     bindRowOpeners($("#modal"));
   }
 
@@ -2362,6 +2487,45 @@
         </form>
       </div>
 
+      <div class="card card-pad" style="max-width:720px;margin-top:20px">
+        <div class="card-title">📝 Contracts &amp; signing</div>
+        <p class="settings-note">
+          Your agreement wording lives here. Every contract you draw up starts from it, with the client,
+          gig and fees merged in — then you sign, send a link, and the client signs on their own page.
+        </p>
+        <div class="form-grid">
+          <div class="field"><label>Contract prefix</label>
+            <input name="contractPrefix" form="settingsForm" value="${escapeHtml(s.contractPrefix || "AGR-")}">
+          </div>
+          <div class="field"><label>Next contract number</label>
+            <input name="nextContractNumber" form="settingsForm" type="number" min="1" value="${escapeHtml(s.nextContractNumber || 1)}">
+          </div>
+        </div>
+
+        <div class="sub-setting">
+          <div class="card-title" style="margin-bottom:8px">Your signature</div>
+          <p class="settings-note">
+            Saved once and reused, so signing a contract is one click. You can always draw a fresh one instead.
+          </p>
+          <div class="sig-saved">
+            ${s.signature ? `<div class="sig-saved-mark">${signatureMark(s.signature)}</div>` : `<span class="settings-note" style="margin:0">Not set up yet</span>`}
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <button class="btn btn-sm" id="setSignature">${s.signature ? "Change signature" : "✍️ Add my signature"}</button>
+              ${s.signature ? `<button class="btn btn-sm btn-danger" id="clearSignature">Remove</button>` : ""}
+            </div>
+          </div>
+        </div>
+
+        <div class="sub-setting">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+            <button class="btn" id="openTemplate">✏️ Edit my contract template</button>
+            <span class="settings-note" style="margin:0">
+              ${(s.contractTemplate && s.contractTemplate.sections ? s.contractTemplate.sections.length : 0)} sections
+            </span>
+          </div>
+        </div>
+      </div>
+
       <div class="card card-pad" style="max-width:720px;margin-top:20px" id="updatesCard"></div>
 
       <div class="card card-pad" style="max-width:720px;margin-top:20px" id="cloudCard"></div>
@@ -2471,6 +2635,7 @@
       data.taxRate = Number(data.taxRate) || 0;
       data.nextInvoiceNumber = Number(data.nextInvoiceNumber) || 1;
       data.defaultDueDays = Number(data.defaultDueDays) || 14;
+      data.nextContractNumber = Number(data.nextContractNumber) || 1;
       Object.assign(state.settings, data);
       // These live in their own cards but are saved together.
       const cidEl = $("#googleClientId", root);   // absent when Gmail rides on the signed-in account
@@ -2483,7 +2648,7 @@
 
     let settingsSaveTimer;
     const savedNote = $("#settingsSaved", root);
-    settingsForm.addEventListener("input", () => {
+    function queueSettingsSave() {
       clearTimeout(settingsSaveTimer);
       settingsSaveTimer = setTimeout(() => {
         commitSettings();
@@ -2493,7 +2658,11 @@
           setTimeout(() => savedNote.classList.remove("show"), 1800);
         }
       }, 600);
-    });
+    }
+    settingsForm.addEventListener("input", queueSettingsSave);
+    // Fields that live in another card are tied to the form with the
+    // form= attribute, which carries their values but not their events.
+    $$('[form="settingsForm"]', root).forEach(el => el.addEventListener("input", queueSettingsSave));
 
     settingsForm.addEventListener("submit", e => {
       e.preventDefault();
@@ -2515,6 +2684,27 @@
       toast(raw ? "Calendly link saved 📅" : "Calendly link cleared");
     });
     $("#testCalendly", root)?.addEventListener("click", () => window.open(calendlyLink(), "_blank", "noopener"));
+
+    $("#openTemplate", root).addEventListener("click", () => {
+      commitSettingsRef?.();
+      openTemplateEditor();
+    });
+    $("#setSignature", root).addEventListener("click", () => {
+      commitSettingsRef?.();
+      openSignatureModal({
+        title: "Your signature",
+        name: (state.settings.signature && state.settings.signature.name) || state.settings.ownerName || state.settings.businessName || "",
+        onSign: sig => {
+          state.settings.signature = sig;
+          save(); closeModal(); renderSettings(root);
+          toast("Signature saved ✍️");
+        },
+      });
+    });
+    $("#clearSignature", root)?.addEventListener("click", () => {
+      state.settings.signature = null;
+      save(); renderSettings(root); toast("Signature removed");
+    });
 
     $("#showGcal", root)?.addEventListener("change", async e => {
       const on = e.target.checked;
@@ -2631,6 +2821,7 @@
             clients: data.clients || [],
             events: data.events || [],
             invoices: (data.invoices || []).map(migrateInvoice),
+            contracts: data.contracts || [],
           };
           save(); render(); toast("Backup imported");
 
@@ -2651,8 +2842,8 @@
 
     $("#clearData", root).addEventListener("click", () => {
       const scope = cloud.user
-        ? "This permanently erases ALL clients, gigs and invoices in your account, on every device."
-        : "This permanently erases ALL clients, gigs and invoices in this browser.";
+        ? "This permanently erases ALL clients, gigs, invoices and contracts in your account, on every device."
+        : "This permanently erases ALL clients, gigs, invoices and contracts in this browser.";
       if (!confirm(scope + " Are you sure?")) return;
       if (!confirm("Last chance — really erase everything?")) return;
       state = emptyState();
@@ -2870,8 +3061,17 @@ const firebaseConfig = {
       .sort((a, b) => (a.dueDate || "").localeCompare(b.dueDate || ""));
   }
 
+  // Contracts sitting out for signature belong here too — chasing one
+  // is exactly the kind of thing that otherwise gets forgotten.
+  function unsignedContracts() {
+    return (state.contracts || [])
+      .filter(ct => contractStatus(ct) === "sent")
+      .sort((a, b) => (a.sentAt || "").localeCompare(b.sentAt || ""));
+  }
+
   function remindersNeedingAction() {
-    return upcomingReminders().filter(r => r.pay.kind !== "paid").length + overdueReminders().length;
+    return upcomingReminders().filter(r => r.pay.kind !== "paid").length
+      + overdueReminders().length + unsignedContracts().length;
   }
 
   function refreshRemindersBadge() {
@@ -2882,11 +3082,23 @@ const firebaseConfig = {
     badge.classList.toggle("hidden", n === 0);
   }
 
+  // "today", "3 days ago" — for things that happened at a moment
+  // rather than on a date.
+  function relativeStamp(iso) {
+    const then = new Date(iso);
+    if (isNaN(then)) return "";
+    const days = Math.floor((Date.now() - then.getTime()) / 86400000);
+    if (days <= 0) return "today";
+    if (days === 1) return "yesterday";
+    return `${days} days ago`;
+  }
+
   function renderReminders() {
     const panel = document.getElementById("remindersPanel");
     if (!panel) return;
     const list = upcomingReminders();
     const overdue = overdueReminders();
+    const unsigned = unsignedContracts();
     const owed = list.reduce((s, r) => s + (r.pay.balance || 0), 0);
 
     panel.innerHTML = `
@@ -2908,6 +3120,19 @@ const firebaseConfig = {
                 <div class="rem-row-meta">Due ${fmtDate(i.dueDate)}</div>
               </div>
               <span class="rem-chip overdue">${money(invBalance(i))}</span>
+            </button>`).join("")}
+        </div>` : ""}
+
+      ${unsigned.length ? `
+        <div class="rem-section">
+          <div class="rem-section-title">✍️ Waiting to be signed</div>
+          ${unsigned.map(ct => `
+            <button class="rem-row" data-rem-contract="${ct.id}">
+              <div class="rem-row-main">
+                <div class="rem-row-title">${escapeHtml(ct.number || "Contract")} · ${escapeHtml(clientName(ct.clientId))}</div>
+                <div class="rem-row-meta">${ct.sentAt ? "Sent " + escapeHtml(relativeStamp(ct.sentAt)) : "Not sent yet"}</div>
+              </div>
+              <span class="rem-chip unpaid">Unsigned</span>
             </button>`).join("")}
         </div>` : ""}
 
@@ -2936,6 +3161,10 @@ const firebaseConfig = {
     $$("[data-rem-invoice]", panel).forEach(el => el.addEventListener("click", () => {
       closeReminders();
       openInvoiceDetail(el.dataset.remInvoice);
+    }));
+    $$("[data-rem-contract]", panel).forEach(el => el.addEventListener("click", () => {
+      closeReminders();
+      openContractDetail(el.dataset.remContract);
     }));
   }
 
@@ -3256,6 +3485,1144 @@ const firebaseConfig = {
       gcal = { monthKey: key, events: [], loading: false, error: e.message || "Could not load Google Calendar" };
     }
     rerender();
+  }
+
+  /* ================= CONTRACTS =================
+     A contract is drawn from the account's own template, with the
+     client, gig and terms merged in. Once it's drawn up the wording is
+     frozen on the record, so what gets signed can never drift away from
+     what was read. The DJ signs in the app; the client signs on their
+     own page (contract.html) through the same kind of unguessable link
+     the live quote uses, and their signature comes straight back here. */
+
+  const CONTRACT_COLLECTION = "contracts";
+  const SIGNATURE_MAX = 60000;     // keeps a drawn signature well inside a Firestore document
+
+  function contractById(id) { return (state.contracts || []).find(c => c.id === id); }
+
+  function contractStatus(ct) {
+    if (!ct) return "draft";
+    if (ct.status === "void") return "void";
+    if (ct.client && ct.client.signedAt) return "signed";
+    if (ct.sentAt) return "sent";
+    return "draft";
+  }
+
+  function contractSigned(ct) { return contractStatus(ct) === "signed"; }
+  function contractLocked(ct) { return contractSigned(ct) || contractStatus(ct) === "void"; }
+  function contractShareActive(ct) { return !!(ct && ct.share && ct.share.id && !ct.share.revokedAt); }
+
+  function contractUrl(shareId) {
+    return new URL(`contract.html?c=${encodeURIComponent(shareId)}`, location.href).href;
+  }
+
+  function contractDocRef(shareId) {
+    if (!cloud.db || !cloud.fs || !cloud.user) return null;
+    return cloud.fs.doc(cloud.db, CONTRACT_COLLECTION, shareId);
+  }
+
+  function nextContractNumber() {
+    const s = state.settings;
+    return `${s.contractPrefix || "AGR-"}${String(s.nextContractNumber || 1).padStart(3, "0")}`;
+  }
+
+  /* ---------- Template merging ---------- */
+
+  const MERGE_FIELDS = [
+    ["agreementDate", "the date on the contract"],
+    ["businessName", "your business name"],
+    ["ownerName", "your name"],
+    ["businessEmail", "your email"],
+    ["businessPhone", "your phone"],
+    ["businessAddress", "your address"],
+    ["clientName", "the client's name"],
+    ["clientEmail", "the client's email"],
+    ["clientPhone", "the client's phone"],
+    ["eventTitle", "the gig's name"],
+    ["eventDate", "the gig's date (or dates)"],
+    ["eventTime", "the gig's start and end time"],
+    ["eventVenue", "venue and address"],
+    ["fee", "the agreed fee"],
+    ["depositPercent", "deposit percentage"],
+    ["overtimeRate", "overtime rate per hour"],
+    ["cancelWindow", "free-cancellation window"],
+    ["cancelPercent", "cancellation fee percentage"],
+    ["hotelClause", "your hotel clause, or a line saying none is needed"],
+    ["invoiceRef", "a line pointing at the linked invoice"],
+  ];
+
+  function contractValues(ct) {
+    const s = state.settings;
+    const c = clientById(ct.clientId);
+    const ev = ct.eventId ? eventById(ct.eventId) : null;
+    const inv = ct.invoiceId ? invoiceById(ct.invoiceId) : null;
+    const t = ct.terms || {};
+    const time = ev && ev.startTime
+      ? fmtTime(ev.startTime) + (ev.endTime ? " – " + fmtTime(ev.endTime) : "")
+      : "To be confirmed";
+
+    return {
+      agreementDate: fmtDate(ct.date),
+      businessName: s.businessName || "",
+      ownerName: s.ownerName || s.businessName || "",
+      businessEmail: s.email || "",
+      businessPhone: s.phone || "",
+      businessAddress: s.address || "",
+      clientName: (c && c.name) || "",
+      clientEmail: (c && c.email) || "",
+      clientPhone: (c && c.phone) || "",
+      eventTitle: (ev && ev.title) || "",
+      eventDate: ev ? fmtDateRange(ev.date, eventEnd(ev)) : "To be confirmed",
+      eventTime: time,
+      eventVenue: ev ? [ev.venue, ev.address].filter(Boolean).join(" — ") || "To be confirmed" : "To be confirmed",
+      fee: money(Number(t.fee) || 0),
+      depositPercent: `${Number(t.depositPercent) || 0}%`,
+      overtimeRate: money(Number(t.overtimeRate) || 0),
+      cancelWindow: `${Number(t.cancelDays) || 0} days`,
+      cancelPercent: `${Number(t.cancelPercent) || 0}%`,
+      hotelClause: t.hotelRequired
+        ? (s.hotelText || "")
+        : "As discussed between the DJ and the client, accommodation is not required for this event.",
+      invoiceRef: inv ? `As agreed, the DJ will provide everything listed on invoice ${inv.number}.` : "",
+    };
+  }
+
+  // Unknown placeholders are left alone rather than silently blanked —
+  // a visible {{typo}} is easier to spot than a missing sentence.
+  function fillTemplate(text, values) {
+    return String(text || "").replace(/\{\{\s*(\w+)\s*\}\}/g, (whole, key) =>
+      Object.prototype.hasOwnProperty.call(values, key) ? values[key] : whole);
+  }
+
+  function resolveSections(template, values) {
+    return (template.sections || [])
+      .filter(sec => sec.heading || sec.body)
+      .map(sec => ({
+        heading: fillTemplate(sec.heading, values),
+        body: fillTemplate(sec.body, values).replace(/\n{3,}/g, "\n\n").trim(),
+      }))
+      // A section that merged down to nothing (an empty invoice line, say)
+      // shouldn't leave a stray heading behind.
+      .filter(sec => sec.body || sec.heading);
+  }
+
+  function contractTemplate() {
+    const t = state.settings.contractTemplate;
+    return t && Array.isArray(t.sections) && t.sections.length ? t : defaultContractTemplate();
+  }
+
+  /* ---------- Signatures ---------- */
+
+  function signatureMark(sig) {
+    if (!sig) return "";
+    if (sig.kind === "drawn" && sig.dataUrl) {
+      return `<img class="sig-img" src="${escapeHtml(sig.dataUrl)}" alt="Signature of ${escapeHtml(sig.name || "")}">`;
+    }
+    return `<span class="sig-typed">${escapeHtml(sig.name || "")}</span>`;
+  }
+
+  function signatureBlock(label, sig, placeholder) {
+    return `
+      <div class="sig-block">
+        <div class="sig-mark">${sig ? signatureMark(sig) : `<span class="sig-empty">${escapeHtml(placeholder)}</span>`}</div>
+        <div class="sig-rule"></div>
+        <div class="sig-meta">
+          <strong>${escapeHtml(label)}</strong>
+          ${sig ? `<span>${escapeHtml(sig.name || "")}</span><span>Signed ${escapeHtml(fmtStamp(sig.signedAt))}</span>` : `<span>Not signed yet</span>`}
+        </div>
+      </div>`;
+  }
+
+  function fmtStamp(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (isNaN(d)) return String(iso);
+    return d.toLocaleString("en-US", {
+      month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
+    });
+  }
+
+  // Draws a typed name onto a canvas so a typed and a drawn signature
+  // behave the same everywhere. Typed ones stay as text, which keeps the
+  // record small; this is only used for the preview.
+  function typedSignaturePreview(name) {
+    return `<span class="sig-typed">${escapeHtml(name)}</span>`;
+  }
+
+  function openSignatureModal({ title, name, onSign, allowSave }) {
+    let mode = "type";
+    let drawn = "";      // data URL of whatever has been drawn
+
+    openModal(modalShell(title, `
+      <div class="sig-tabs">
+        <button class="chip active" data-sig-mode="type">Type it</button>
+        <button class="chip" data-sig-mode="draw">Draw it</button>
+      </div>
+
+      <div class="field full" style="margin-top:14px">
+        <label>Full legal name *</label>
+        <input id="sigName" value="${escapeHtml(name || "")}" placeholder="e.g. Jordan Blake" autocomplete="name">
+      </div>
+
+      <div id="sigTypePane">
+        <div class="sig-preview" id="sigPreview">${typedSignaturePreview(name || "")}</div>
+        <p class="settings-note">Typing your name counts as your signature, the same way it does on any e-signing service.</p>
+      </div>
+
+      <div id="sigDrawPane" class="hidden">
+        <div class="sig-pad-wrap">
+          <canvas id="sigPad" width="900" height="260"></canvas>
+          <div class="sig-pad-hint" id="sigPadHint">Sign here with your mouse or finger</div>
+        </div>
+        <button type="button" class="btn btn-sm" id="sigClear">Clear</button>
+      </div>
+
+      ${allowSave ? `<label class="comp-toggle" style="margin-top:14px;font-size:13.5px">
+        <input type="checkbox" id="sigRemember" checked> Remember this signature for future contracts
+      </label>` : ""}
+
+      <div class="modal-actions">
+        <button class="btn" id="sigCancel">Cancel</button>
+        <button class="btn btn-primary" id="sigConfirm">Sign</button>
+      </div>`));
+
+    const nameEl = $("#sigName");
+    const preview = $("#sigPreview");
+    const canvas = $("#sigPad");
+    const ctx = canvas.getContext("2d");
+    ctx.lineWidth = 3.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#13100e";
+
+    nameEl.addEventListener("input", () => { preview.innerHTML = typedSignaturePreview(nameEl.value); });
+
+    $$("[data-sig-mode]").forEach(btn => btn.addEventListener("click", () => {
+      mode = btn.dataset.sigMode;
+      $$("[data-sig-mode]").forEach(b => b.classList.toggle("active", b === btn));
+      $("#sigTypePane").classList.toggle("hidden", mode !== "type");
+      $("#sigDrawPane").classList.toggle("hidden", mode !== "draw");
+    }));
+
+    let drawing = false;
+    const point = e => {
+      const r = canvas.getBoundingClientRect();
+      const src = e.touches ? e.touches[0] : e;
+      return {
+        x: (src.clientX - r.left) * (canvas.width / r.width),
+        y: (src.clientY - r.top) * (canvas.height / r.height),
+      };
+    };
+    const start = e => {
+      e.preventDefault();
+      drawing = true;
+      $("#sigPadHint").classList.add("hidden");
+      const p = point(e);
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+    };
+    const move = e => {
+      if (!drawing) return;
+      e.preventDefault();
+      const p = point(e);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+    };
+    const end = () => {
+      if (!drawing) return;
+      drawing = false;
+      drawn = canvas.toDataURL("image/png");
+    };
+
+    canvas.addEventListener("mousedown", start);
+    canvas.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", end);
+    canvas.addEventListener("touchstart", start, { passive: false });
+    canvas.addEventListener("touchmove", move, { passive: false });
+    canvas.addEventListener("touchend", end);
+
+    $("#sigClear").addEventListener("click", () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawn = "";
+      $("#sigPadHint").classList.remove("hidden");
+    });
+
+    $("#sigCancel").addEventListener("click", closeModal);
+    $("#sigConfirm").addEventListener("click", () => {
+      const typedName = nameEl.value.trim();
+      if (!typedName) { toast("Type your full name first"); nameEl.focus(); return; }
+      if (mode === "draw" && !drawn) { toast("Draw your signature, or switch to Type it"); return; }
+      if (mode === "draw" && drawn.length > SIGNATURE_MAX) { toast("That signature is too detailed — clear it and sign again"); return; }
+
+      const sig = {
+        kind: mode === "draw" ? "drawn" : "typed",
+        name: typedName,
+        signedAt: new Date().toISOString(),
+      };
+      if (sig.kind === "drawn") sig.dataUrl = drawn;
+      onSign(sig, { remember: !!$("#sigRemember")?.checked });
+    });
+  }
+
+  /* ---------- The contract document ---------- */
+
+  function contractDocHtml(ct, { forSigning = false } = {}) {
+    const s = state.settings;
+    const status = contractStatus(ct);
+
+    return `
+      <div class="agr-doc">
+        <div class="agr-head">
+          <div>
+            <div class="agr-biz">${escapeHtml(s.businessName || "")}</div>
+            <div class="agr-title">${escapeHtml(ct.title || "Agreement")}</div>
+          </div>
+          <div class="agr-logo">${logoHtml()}</div>
+        </div>
+        <div class="agr-meta">
+          <span>${escapeHtml(ct.number || "")}</span>
+          <span>Dated ${fmtDate(ct.date)}</span>
+          ${status === "signed" ? `<span class="agr-executed">FULLY SIGNED</span>`
+            : status === "void" ? `<span class="agr-void">VOID</span>` : ""}
+        </div>
+        <div class="agr-body">
+          ${(ct.sections || []).map((sec, i) => `
+            <section class="agr-section">
+              ${sec.heading ? `<h3>${i + 1}. ${escapeHtml(sec.heading)}</h3>` : ""}
+              <p>${escapeHtml(sec.body).replace(/\n/g, "<br>")}</p>
+            </section>`).join("")}
+        </div>
+        <div class="agr-signatures">
+          ${signatureBlock(`${s.businessName || "DJ"} (DJ)`, ct.dj, forSigning ? "Awaiting signature" : "Sign in the app")}
+          ${signatureBlock(`${clientName(ct.clientId)} (Client)`, ct.client, "Awaiting signature")}
+        </div>
+      </div>`;
+  }
+
+  function printContract(ct) {
+    $("#printArea").innerHTML = contractDocHtml(ct);
+    window.print();
+  }
+
+  /* ---------- Views ---------- */
+
+  let contractFilter = "all";
+
+  function renderContracts(root) {
+    let list = [...(state.contracts || [])];
+    if (contractFilter !== "all") list = list.filter(c => contractStatus(c) === contractFilter);
+    list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+
+    const awaiting = (state.contracts || []).filter(c => contractStatus(c) === "sent").length;
+    const chips = [["all", "All"], ["draft", "Drafts"], ["sent", "Out for signature"], ["signed", "Signed"], ["void", "Void"]];
+
+    root.innerHTML = `
+      <div class="view-header">
+        <div>
+          <div class="view-title">Contracts</div>
+          <div class="view-sub">${awaiting
+            ? `<strong>${awaiting}</strong> waiting on a client signature`
+            : "Send an agreement, get it signed, keep the record"}</div>
+        </div>
+        <div class="header-actions">
+          <button class="btn" id="editTemplate">✏️ Edit my template</button>
+          <button class="btn btn-primary" id="addContract">+ New contract</button>
+        </div>
+      </div>
+
+      <div class="filter-row">
+        ${chips.map(([k, lbl]) => `<button class="chip ${contractFilter === k ? "active" : ""}" data-cfilter="${k}">${lbl}</button>`).join("")}
+      </div>
+
+      <div class="card">
+        ${list.length ? `<div class="table-wrap"><table>
+          <thead><tr><th>#</th><th>Client</th><th>Gig</th><th>Dated</th><th>Fee</th><th>You</th><th>Client</th><th>Status</th></tr></thead>
+          <tbody>
+            ${list.map(ct => `
+              <tr class="clickable" data-open-contract="${ct.id}">
+                <td class="nowrap"><strong>${escapeHtml(ct.number || "—")}</strong>${contractShareActive(ct) && contractStatus(ct) === "sent" ? ` <span class="live-tag" title="Out for signature">LIVE</span>` : ""}</td>
+                <td>${escapeHtml(clientName(ct.clientId))}</td>
+                <td>${ct.eventId && eventById(ct.eventId) ? escapeHtml(eventById(ct.eventId).title) : "—"}</td>
+                <td class="nowrap">${fmtDate(ct.date)}</td>
+                <td class="nowrap">${ct.terms && ct.terms.fee ? money(ct.terms.fee) : "—"}</td>
+                <td>${ct.dj && ct.dj.signedAt ? `<span class="tick">✓</span>` : `<span class="tick off">—</span>`}</td>
+                <td>${ct.client && ct.client.signedAt ? `<span class="tick">✓</span>` : `<span class="tick off">—</span>`}</td>
+                <td>${badge(contractStatus(ct))}</td>
+              </tr>`).join("")}
+          </tbody></table></div>`
+        : `<div class="empty-state"><div class="big">📝</div>
+             <p>No contracts yet. Draw one up from your template and send it for signature.</p>
+             <button class="btn btn-primary" id="emptyAddContract">+ New contract</button>
+             <button class="btn" id="emptyEditTemplate">✏️ Edit my template first</button>
+           </div>`}
+      </div>`;
+
+    $("#addContract", root).addEventListener("click", () => openContractForm());
+    $("#emptyAddContract", root)?.addEventListener("click", () => openContractForm());
+    $("#editTemplate", root).addEventListener("click", () => openTemplateEditor());
+    $("#emptyEditTemplate", root)?.addEventListener("click", () => openTemplateEditor());
+    $$("[data-cfilter]", root).forEach(ch => ch.addEventListener("click", () => {
+      contractFilter = ch.dataset.cfilter;
+      renderContracts(root);
+    }));
+    $$("[data-open-contract]", root).forEach(tr =>
+      tr.addEventListener("click", () => openContractDetail(tr.dataset.openContract)));
+  }
+
+  function openContractForm(id, preset = {}) {
+    const ct = id ? contractById(id) : null;
+    if (ct && contractLocked(ct)) {
+      toast(contractSigned(ct) ? "A signed contract can't be edited" : "This contract is void");
+      return;
+    }
+    const s = state.settings;
+    // ct → the record being edited, preset → whatever was carried in
+    // (from a gig, or back out of the preview), then sensible defaults.
+    const base = { ...(ct || {}), ...preset };
+    const clientId = base.clientId || "";
+    const eventId = base.eventId || "";
+    const ev = eventId ? eventById(eventId) : null;
+    const t = base.terms || {};
+    const fee = t.fee != null ? t.fee : (ev && ev.fee) || "";
+
+    openModal(modalShell(ct ? `Edit ${ct.number}` : "New contract", `
+      <form id="contractForm">
+        <div class="form-grid">
+          <div class="field"><label>Contract #</label>
+            <input name="number" value="${escapeHtml(base.number || nextContractNumber())}">
+          </div>
+          <div class="field"><label>Dated</label>
+            <input name="date" type="date" value="${escapeHtml(base.date || todayISO())}">
+          </div>
+          <div class="field"><label>Client *</label>
+            <select name="clientId" required>${clientOptions(clientId)}</select>
+          </div>
+          <div class="field"><label>Gig</label>
+            <select name="eventId"><option value="">— None —</option>${eventOptionsAll(eventId)}</select>
+          </div>
+          <div class="field full"><label>Linked invoice (optional)
+            <span class="field-hint">— adds a line pointing the client at it</span></label>
+            <select name="invoiceId"><option value="">— None —</option>${invoiceOptions(base.invoiceId)}</select>
+          </div>
+        </div>
+
+        <div class="section-label">Terms <span class="section-hint">These fill in the blanks in your template.</span></div>
+        <div class="form-grid">
+          <div class="field"><label>Fee</label>
+            <input name="fee" type="number" min="0" step="0.01" value="${escapeHtml(fee)}">
+          </div>
+          <div class="field"><label>Deposit (%)</label>
+            <input name="depositPercent" type="number" min="0" max="100" value="${escapeHtml(t.depositPercent != null ? t.depositPercent : 25)}">
+          </div>
+          <div class="field"><label>Overtime rate (per hour)</label>
+            <input name="overtimeRate" type="number" min="0" step="0.01" value="${escapeHtml(t.overtimeRate != null ? t.overtimeRate : 120)}">
+          </div>
+          <div class="field"><label>Free cancellation up to (days)</label>
+            <input name="cancelDays" type="number" min="0" value="${escapeHtml(t.cancelDays != null ? t.cancelDays : 7)}">
+          </div>
+          <div class="field"><label>Cancellation fee (%)</label>
+            <input name="cancelPercent" type="number" min="0" max="100" value="${escapeHtml(t.cancelPercent != null ? t.cancelPercent : 25)}">
+          </div>
+          <div class="field">
+            <label>Accommodation</label>
+            <label class="comp-toggle" style="font-size:13.5px;margin-top:8px">
+              <input type="checkbox" name="hotelRequired" ${t.hotelRequired ? "checked" : ""}> Client provides a hotel room
+            </label>
+          </div>
+        </div>
+
+        <div class="settings-note" style="margin-top:14px">
+          The wording comes from your template in Settings — ${escapeHtml(s.businessName || "your")} contract, your clauses.
+          <button type="button" class="linkish" id="formEditTemplate">Edit the template →</button>
+        </div>
+
+        <div class="modal-actions">
+          ${ct ? `<button type="button" class="btn btn-danger" id="deleteContract">Delete</button>` : ""}
+          <button type="button" class="btn" id="cancelContract">Cancel</button>
+          <button type="button" class="btn" id="previewContract">👁 Preview</button>
+          <button type="submit" class="btn btn-primary">${ct ? "Save changes" : "Create contract"}</button>
+        </div>
+      </form>`, true));
+
+    const form = $("#contractForm");
+
+    function collect() {
+      const fd = Object.fromEntries(new FormData(form).entries());
+      return {
+        number: (fd.number || "").trim() || nextContractNumber(),
+        date: fd.date || todayISO(),
+        clientId: fd.clientId,
+        eventId: fd.eventId || "",
+        invoiceId: fd.invoiceId || "",
+        terms: {
+          fee: Number(fd.fee) || 0,
+          depositPercent: Number(fd.depositPercent) || 0,
+          overtimeRate: Number(fd.overtimeRate) || 0,
+          cancelDays: Number(fd.cancelDays) || 0,
+          cancelPercent: Number(fd.cancelPercent) || 0,
+          hotelRequired: !!form.hotelRequired.checked,
+        },
+      };
+    }
+
+    // The sections are resolved here and stored on the record, so the
+    // signed wording never moves when the template is edited later.
+    function build(base) {
+      const draft = { ...(ct || {}), ...base };
+      const template = contractTemplate();
+      draft.title = template.title || "Agreement";
+      draft.sections = resolveSections(template, contractValues(draft));
+      return draft;
+    }
+
+    $("#cancelContract").addEventListener("click", () => (ct ? openContractDetail(id) : closeModal()));
+    $("#formEditTemplate").addEventListener("click", () =>
+      openTemplateEditor(() => openContractForm(id, { ...preset, ...collect() })));
+    $("#previewContract").addEventListener("click", () => {
+      if (!form.clientId.value) { toast("Pick a client first"); return; }
+      const typed = collect();
+      const draft = build(typed);
+      openModal(modalShell(`Preview — ${draft.number}`, `
+        <div class="doc-preview">${contractDocHtml(draft)}</div>
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="backToContract">← Back to the form</button>
+        </div>`, true));
+      // Carry the typed values back so a look at the preview never
+      // costs someone the form they just filled in.
+      $("#backToContract").addEventListener("click", () => openContractForm(id, { ...preset, ...typed }));
+    });
+
+    $("#deleteContract")?.addEventListener("click", async () => {
+      if (!confirm("Delete this contract?")) return;
+      await retireContract(ct);
+      state.contracts = state.contracts.filter(x => x.id !== id);
+      save(); closeModal(); render(); toast("Contract deleted");
+    });
+
+    form.addEventListener("submit", async e => {
+      e.preventDefault();
+      const base = collect();
+      if (!base.clientId) { toast("Pick a client"); return; }
+      const built = build(base);
+
+      if (ct) {
+        Object.assign(ct, built);
+        if (contractShareActive(ct)) {
+          // The client may already be looking at the old wording.
+          await publishContract(ct).catch(err => console.warn(err));
+        }
+        save(); render(); openContractDetail(id); toast("Contract updated");
+      } else {
+        const record = {
+          id: uid(),
+          createdAt: todayISO(),
+          status: "draft",
+          dj: null, client: null,
+          ...built,
+        };
+        state.contracts.push(record);
+        if (record.number === nextContractNumber()) {
+          state.settings.nextContractNumber = (state.settings.nextContractNumber || 1) + 1;
+        }
+        save(); render(); openContractDetail(record.id);
+        toast("Contract created — sign it, then send it over 📝");
+      }
+    });
+  }
+
+  function openContractDetail(id) {
+    const ct = contractById(id);
+    if (!ct) return;
+    const c = clientById(ct.clientId);
+    const status = contractStatus(ct);
+    const djSigned = !!(ct.dj && ct.dj.signedAt);
+    const clientSigned = !!(ct.client && ct.client.signedAt);
+    const live = contractShareActive(ct);
+
+    openModal(modalShell(`${ct.number} — ${ct.title || "Agreement"}`, `
+      <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        ${badge(status)}
+        <span style="color:var(--muted);font-size:13px">
+          ${c ? "With " + escapeHtml(c.name) : ""}${ct.terms && ct.terms.fee ? " · " + money(ct.terms.fee) : ""}
+        </span>
+      </div>
+
+      <div class="sign-status">
+        <div class="sign-status-row ${djSigned ? "done" : ""}">
+          <span class="sign-step">${djSigned ? "✓" : "1"}</span>
+          <div>
+            <strong>You${djSigned ? " signed" : " sign"}</strong>
+            <span>${djSigned ? escapeHtml(fmtStamp(ct.dj.signedAt)) : "Sign before you send it over"}</span>
+          </div>
+          ${djSigned
+            ? `<button class="btn btn-sm" id="ctResign">Re-sign</button>`
+            : `<button class="btn btn-sm btn-primary" id="ctSign">✍️ Sign now</button>`}
+        </div>
+        <div class="sign-status-row ${clientSigned ? "done" : ""}">
+          <span class="sign-step">${clientSigned ? "✓" : "2"}</span>
+          <div>
+            <strong>${escapeHtml(c ? c.name : "The client")}${clientSigned ? " signed" : " signs"}</strong>
+            <span>${clientSigned
+              ? escapeHtml(`${ct.client.name} · ${fmtStamp(ct.client.signedAt)}`)
+              : live ? "Link sent — this updates the moment they sign" : "Send them the signing link"}</span>
+          </div>
+          ${clientSigned ? "" : `<button class="btn btn-sm ${djSigned ? "btn-primary" : ""}" id="ctSend">${live ? "Link & reminders" : "📨 Send for signature"}</button>`}
+        </div>
+      </div>
+
+      ${status === "void" ? `<div class="share-strip warn-strip">
+        <span>This contract was voided${ct.voidedAt ? " on " + escapeHtml(fmtStamp(ct.voidedAt)) : ""}. The signing link no longer opens.</span>
+      </div>` : ""}
+
+      ${status === "signed" ? `<div class="share-strip">
+        <span class="live-dot"></span>
+        <span><strong>Fully signed.</strong> Both signatures are on the record — print or save a copy for your files.</span>
+      </div>` : ""}
+
+      <div class="doc-preview">${contractDocHtml(ct)}</div>
+
+      <div class="modal-actions" style="flex-wrap:wrap">
+        <button class="btn" id="ctPrint">🖨 Print / PDF</button>
+        ${status !== "void" ? `<button class="btn" id="ctShare">🔗 ${live ? "Signing link" : "Get signing link"}</button>` : ""}
+        ${contractLocked(ct) ? "" : `<button class="btn" id="ctEdit">Edit</button>`}
+        ${status === "void" ? "" : `<button class="btn btn-danger" id="ctVoid">Void</button>`}
+      </div>`, true));
+
+    $("#ctPrint").addEventListener("click", () => printContract(ct));
+    $("#ctEdit")?.addEventListener("click", () => openContractForm(id));
+    $("#ctSign")?.addEventListener("click", () => signAsDj(id));
+    $("#ctResign")?.addEventListener("click", () => signAsDj(id));
+    $("#ctSend")?.addEventListener("click", () => openContractSendModal(id));
+    $("#ctShare")?.addEventListener("click", () => openContractSendModal(id));
+    $("#ctVoid")?.addEventListener("click", async () => {
+      if (!confirm("Void this contract? The signing link stops working and the record is kept for your files.")) return;
+      try {
+        await voidContract(ct);
+        render(); openContractDetail(id);
+        toast("Contract voided");
+      } catch (e) {
+        console.warn(e);
+        toast(e.message || "Could not void it — check your connection");
+      }
+    });
+  }
+
+  function signAsDj(id) {
+    const ct = contractById(id);
+    if (!ct) return;
+    if (contractSigned(ct)) { toast("This contract is already signed by both sides"); return; }
+    const saved = state.settings.signature;
+
+    openSignatureModal({
+      title: "Sign this contract",
+      name: (saved && saved.name) || state.settings.ownerName || state.settings.businessName || "",
+      allowSave: true,
+      onSign: async (sig, { remember }) => {
+        ct.dj = sig;
+        if (remember) state.settings.signature = { ...sig };
+        save();
+        if (contractShareActive(ct)) await publishContract(ct).catch(e => console.warn(e));
+        render();
+        openContractDetail(id);
+        toast("Signed ✍️");
+      },
+    });
+  }
+
+  /* ---------- Sending for signature ---------- */
+
+  function contractEmailSubject(ct) {
+    return `Please review and sign: ${ct.title || "Agreement"} — ${state.settings.businessName}`;
+  }
+
+  function contractEmailText(ct, url) {
+    const s = state.settings;
+    const c = clientById(ct.clientId);
+    const ev = ct.eventId ? eventById(ct.eventId) : null;
+    return [
+      `Hi ${c ? c.name.split(" ")[0] : "there"},`,
+      ``,
+      ev ? `Here is the agreement for ${ev.title} on ${fmtDateRange(ev.date, eventEnd(ev))}.` : `Here is your agreement.`,
+      ``,
+      `Read it and sign at the bottom of this page:`,
+      url,
+      ``,
+      `${ct.dj && ct.dj.signedAt ? "It's already signed on our side. " : ""}Once you sign, you'll have the fully signed copy to keep and print.`,
+      ``,
+      `Thank you!`,
+      s.ownerName || s.businessName,
+      s.phone || "",
+    ].join("\n");
+  }
+
+  function contractEmailHtml(ct, url) {
+    const s = state.settings;
+    const c = clientById(ct.clientId);
+    const ev = ct.eventId ? eventById(ct.eventId) : null;
+    return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#222;">
+      <div style="max-width:560px;margin:0 auto;background:#fff;">
+        <div style="background:#111;color:#fff;padding:26px 32px;">
+          <div style="font-size:12px;color:#bbb;letter-spacing:1px;">${escapeHtml(s.businessName)}</div>
+          <div style="font-size:26px;font-weight:300;">${escapeHtml(ct.title || "Agreement")}</div>
+        </div>
+        <div style="padding:24px 32px 6px;font-size:15px;line-height:1.6;">
+          Hi ${escapeHtml(c ? c.name.split(" ")[0] : "there")},<br><br>
+          ${ev ? `Here is the agreement for <strong>${escapeHtml(ev.title)}</strong> on ${escapeHtml(fmtDateRange(ev.date, eventEnd(ev)))}.`
+               : "Here is your agreement."}
+          Have a read, and sign at the bottom of the page.
+        </div>
+        <p style="margin:22px 32px;">
+          <a href="${escapeHtml(url)}" style="background:#e85d26;color:#fff;text-decoration:none;font-weight:bold;padding:13px 26px;border-radius:8px;display:inline-block;font-size:15px;">Review &amp; sign</a>
+        </p>
+        <div style="padding:0 32px;font-size:12.5px;color:#777;line-height:1.6;">Or paste this into your browser:<br>
+          <a href="${escapeHtml(url)}" style="color:#e85d26;">${escapeHtml(url)}</a>
+        </div>
+        <div style="padding:18px 32px 28px;font-size:13px;color:#555;line-height:1.7;">
+          ${ct.dj && ct.dj.signedAt ? "It's already signed on our side. " : ""}Once you sign, you'll have the fully signed copy to keep.<br><br>
+          Thank you!<br><strong>${escapeHtml(s.ownerName || s.businessName)}</strong><br>
+          ${escapeHtml(s.phone || "")}<br>${escapeHtml(s.email || "")}
+        </div>
+      </div>
+    </body></html>`;
+  }
+
+  function openContractSendModal(id) {
+    const ct = contractById(id);
+    if (!ct) return;
+
+    if (!canShare()) {
+      openModal(modalShell("Signing needs your account", `
+        <p class="settings-note">
+          The client signs on a page served from your cloud account — that's how their signature
+          finds its way back here. Sign in (or turn on cloud sync in Settings) and the link appears.
+        </p>
+        <div class="modal-actions">
+          <button class="btn" id="ctBack">Back to the contract</button>
+          <button class="btn btn-primary" id="ctSettings">Open Settings</button>
+        </div>`));
+      $("#ctBack").addEventListener("click", () => openContractDetail(id));
+      $("#ctSettings").addEventListener("click", () => { closeModal(); go("settings"); });
+      return;
+    }
+
+    const c = clientById(ct.clientId);
+    const live = contractShareActive(ct);
+    const url = live ? contractUrl(ct.share.id) : "";
+    const gmailPossible = !!(c && c.email && (canUseAccountForGmail() || state.settings.googleClientId));
+    const djSigned = !!(ct.dj && ct.dj.signedAt);
+
+    if (!live) {
+      openModal(modalShell("Send for signature", `
+        <p class="settings-note">
+          This publishes the contract to a private page at a link only ${c ? escapeHtml(c.name) : "your client"} gets.
+          They read it, type or draw their signature, and it lands straight back here —
+          you'll see it the moment they sign.
+        </p>
+        ${djSigned ? "" : `<div class="notes-box" style="margin-top:12px">
+          <strong>You haven't signed yet.</strong> Most people sign first so the client receives a contract
+          that's already signed on your side. You can still send it and sign afterwards.
+        </div>`}
+        <div class="modal-actions">
+          <button class="btn" id="ctSendCancel">Cancel</button>
+          ${djSigned ? "" : `<button class="btn" id="ctSignFirst">✍️ Sign it first</button>`}
+          <button class="btn btn-primary" id="ctCreateLink">📨 Create the signing link</button>
+        </div>`));
+
+      $("#ctSendCancel").addEventListener("click", () => openContractDetail(id));
+      $("#ctSignFirst")?.addEventListener("click", () => signAsDj(id));
+      $("#ctCreateLink").addEventListener("click", async () => {
+        const btn = $("#ctCreateLink");
+        btn.disabled = true;
+        btn.textContent = "Publishing…";
+        try {
+          const ready = await shareContract(ct);
+          render();
+          openContractSendModal(id);
+          toast(ready ? "Ready to send 📨" : "Created — it goes live once your connection catches up");
+        } catch (e) {
+          console.warn(e);
+          btn.disabled = false;
+          btn.textContent = "📨 Create the signing link";
+          toast(e.message || "Could not publish it — check your connection");
+        }
+      });
+      return;
+    }
+
+    openModal(modalShell("Signing link", `
+      <p class="settings-note">
+        Send this to ${c ? escapeHtml(c.name) : "your client"}. They can read the contract and sign it
+        from a phone or a laptop; their signature comes back here automatically.
+      </p>
+
+      <div class="field full">
+        <label>Their signing link</label>
+        <input id="ctUrlInput" readonly value="${escapeHtml(url)}">
+      </div>
+
+      <div class="booking-actions">
+        <button class="btn" id="ctCopyLink">🔗 Copy link</button>
+        ${c && c.email ? `<button class="btn" id="ctMailLink">✉️ Email (mail app)</button>` : ""}
+        ${gmailPossible ? `<button class="btn btn-primary" id="ctGmailLink">📨 Send via Gmail</button>` : ""}
+        <button class="btn" id="ctPreviewLink">👁 See what they see</button>
+      </div>
+
+      ${!(c && c.email) ? `<div class="gmail-hint">This client has no email on file — copy the link and text it to them, or add an email address first.</div>` : ""}
+
+      <div class="share-stop">
+        <button class="btn btn-sm btn-danger" id="ctStopLink">Withdraw the link</button>
+        <span class="hint">Takes the contract back down. Anyone still holding the link sees a short note instead.</span>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn" id="ctSendDone">Done</button>
+      </div>`));
+
+    $("#ctSendDone").addEventListener("click", () => openContractDetail(id));
+
+    $("#ctCopyLink").addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(url);
+        toast("Signing link copied 🔗");
+      } catch {
+        const input = $("#ctUrlInput");
+        input.focus(); input.select();
+        toast("Press Ctrl/Cmd+C to copy");
+      }
+    });
+
+    $("#ctPreviewLink").addEventListener("click", () => window.open(url, "_blank", "noopener"));
+
+    $("#ctMailLink")?.addEventListener("click", () => {
+      window.location.href = `mailto:${encodeURIComponent(c.email)}?subject=${encodeURIComponent(contractEmailSubject(ct))}&body=${encodeURIComponent(contractEmailText(ct, url))}`;
+      markContractSent(ct);
+      toast("Opening your mail app…");
+    });
+
+    $("#ctGmailLink")?.addEventListener("click", async () => {
+      const btn = $("#ctGmailLink");
+      btn.disabled = true;
+      try {
+        if (!hasGoogleScope(GMAIL_SCOPE)) { toast("Connecting to Gmail…"); await ensureGoogleScope(GMAIL_SCOPE); }
+        toast("Sending…");
+        const send = () => gmailSend(c.email, contractEmailSubject(ct), contractEmailHtml(ct, url));
+        try {
+          await send();
+        } catch (err) {
+          if (!err || !err.expired) throw err;
+          await ensureGoogleScope(GMAIL_SCOPE);
+          await send();
+        }
+        markContractSent(ct);
+        closeModal();
+        toast(`Contract sent to ${c.email} 📨`);
+      } catch (err) {
+        console.warn(err);
+        btn.disabled = false;
+        if (err && (err.setupNeeded || err.needsConsent)) showGoogleProblem(err, "Gmail");
+        else toast(err.message || "Could not send — try the mail app instead");
+      }
+    });
+
+    $("#ctStopLink").addEventListener("click", async () => {
+      if (!confirm("Withdraw this link? The client won't be able to open or sign it any more.")) return;
+      const btn = $("#ctStopLink");
+      btn.disabled = true;
+      try {
+        await revokeContract(ct);
+        render();
+        toast("Link withdrawn");
+        openContractDetail(id);
+      } catch (e) {
+        console.warn(e);
+        btn.disabled = false;
+        toast(e.message || "Could not withdraw it — check your connection");
+      }
+    });
+  }
+
+  function markContractSent(ct) {
+    if (!ct.sentAt) {
+      ct.sentAt = new Date().toISOString();
+      save(); render();
+    }
+  }
+
+  /* ---------- Publishing, signing back, withdrawing ---------- */
+
+  function contractPayload(ct) {
+    const s = state.settings;
+    return {
+      v: 1,
+      ownerUid: cloud.user.uid,
+      revoked: false,
+      voided: contractStatus(ct) === "void",
+      business: {
+        name: s.businessName || "",
+        ownerName: s.ownerName || "",
+        logoText: s.logoText || "",
+        logoImg: s.logoImg && s.logoImg.length <= SHARE_LOGO_LIMIT ? s.logoImg : "",
+        address: s.address || "",
+        phone: s.phone || "",
+        email: s.email || "",
+      },
+      contract: {
+        title: ct.title || "Agreement",
+        number: ct.number || "",
+        date: ct.date || "",
+        sections: (ct.sections || []).map(sec => ({ heading: sec.heading || "", body: sec.body || "" })),
+        clientLabel: clientName(ct.clientId),
+      },
+      dj: ct.dj ? { kind: ct.dj.kind, name: ct.dj.name, dataUrl: ct.dj.dataUrl || "", signedAt: ct.dj.signedAt } : null,
+      // The client's half is written by the client's own page, so it is
+      // never included here — a republish must not wipe a signature.
+    };
+  }
+
+  async function publishContract(ct) {
+    if (!contractShareActive(ct) || !canShare()) return false;
+    const body = {
+      ...contractPayload(ct),
+      updatedAt: cloud.fs.serverTimestamp(),
+      updatedAtMs: Date.now(),
+    };
+    if (JSON.stringify(body).length > SHARE_DOC_LIMIT) {
+      body.business = { ...body.business, logoImg: "" };
+      if (JSON.stringify(body).length > SHARE_DOC_LIMIT) {
+        throw new Error("This contract is too long to publish — trim it or use a smaller logo image.");
+      }
+    }
+    // merge so the client's signature, written from their page, survives.
+    await withTimeout(cloud.fs.setDoc(contractDocRef(ct.share.id), body, { merge: true }), 12000);
+    return true;
+  }
+
+  async function shareContract(ct) {
+    if (!navigator.onLine) throw new Error("You're offline — reconnect to publish the contract.");
+    ct.share = { id: newShareId(), createdAt: new Date().toISOString() };
+    try {
+      // clientSigned starts explicitly false: the rules key the client's
+      // one-time signing write off it.
+      const body = {
+        ...contractPayload(ct),
+        clientSigned: false,
+        clientSignature: null,
+        updatedAt: cloud.fs.serverTimestamp(),
+        updatedAtMs: Date.now(),
+      };
+      await withTimeout(cloud.fs.setDoc(contractDocRef(ct.share.id), body), 12000);
+    } catch (e) {
+      if (!e.queued) { delete ct.share; throw e; }
+      markContractSent(ct);
+      save(); watchContracts();
+      return false;
+    }
+    markContractSent(ct);
+    save();
+    watchContracts();
+    return true;
+  }
+
+  async function revokeContract(ct) {
+    if (!ct.share || !ct.share.id) return true;
+    let live = true;
+    if (canShare()) {
+      try {
+        await withTimeout(cloud.fs.setDoc(contractDocRef(ct.share.id), {
+          v: 1, ownerUid: cloud.user.uid, revoked: true,
+          updatedAt: cloud.fs.serverTimestamp(), updatedAtMs: Date.now(),
+        }), 12000);
+      } catch (e) {
+        if (!e.queued) throw e;
+        live = false;
+      }
+    }
+    ct.share = { ...ct.share, revokedAt: new Date().toISOString() };
+    save();
+    watchContracts();
+    return live;
+  }
+
+  async function voidContract(ct) {
+    ct.status = "void";
+    ct.voidedAt = new Date().toISOString();
+    if (contractShareActive(ct)) await revokeContract(ct);
+    else save();
+    watchContracts();
+  }
+
+  async function retireContract(ct) {
+    if (!contractShareActive(ct)) return;
+    try { await revokeContract(ct); }
+    catch (e) { console.warn("Could not withdraw the signing link", e); }
+  }
+
+  // Live listeners on everything still out for signature, so a client
+  // signing on their phone shows up here without a refresh.
+  const contractWatchers = new Map();
+
+  function watchContracts() {
+    if (!canShare()) {
+      contractWatchers.forEach(unsub => unsub());
+      contractWatchers.clear();
+      return;
+    }
+    const wanted = new Set();
+    (state.contracts || [])
+      .filter(ct => contractShareActive(ct) && contractStatus(ct) === "sent")
+      .slice(0, 25)
+      .forEach(ct => {
+        wanted.add(ct.share.id);
+        if (contractWatchers.has(ct.share.id)) return;
+        const unsub = cloud.fs.onSnapshot(contractDocRef(ct.share.id), snap => {
+          if (!snap.exists()) return;
+          applyClientSignature(ct.id, snap.data());
+        }, err => console.warn("Contract listener failed", err));
+        contractWatchers.set(ct.share.id, unsub);
+      });
+
+    [...contractWatchers.keys()].forEach(key => {
+      if (wanted.has(key)) return;
+      contractWatchers.get(key)();
+      contractWatchers.delete(key);
+    });
+  }
+
+  function applyClientSignature(contractId, data) {
+    const ct = contractById(contractId);
+    if (!ct || !data || !data.clientSigned || !data.clientSignature) return;
+    if (ct.client && ct.client.signedAt) return;        // already recorded
+
+    const sig = data.clientSignature;
+    ct.client = {
+      kind: sig.kind === "drawn" ? "drawn" : "typed",
+      name: sig.name || clientName(ct.clientId),
+      email: sig.email || "",
+      dataUrl: sig.dataUrl || "",
+      signedAt: sig.signedAt || new Date().toISOString(),
+    };
+    save();
+    render();
+    watchContracts();
+    toast(`${ct.client.name} signed ${ct.number} ✍️`);
+  }
+
+  /* ---------- Template editor ---------- */
+
+  function openTemplateEditor(onDone) {
+    const template = JSON.parse(JSON.stringify(contractTemplate()));
+
+    function body() {
+      return `
+        <p class="settings-note">
+          This is the wording every new contract starts from. Write it the way you write it today —
+          paste in your own clauses if you have them. Anything in
+          <code>{{double braces}}</code> is filled in per contract.
+        </p>
+
+        <details class="merge-help">
+          <summary>What you can drop in</summary>
+          <ul>
+            ${MERGE_FIELDS.map(([k, what]) => `<li><code>{{${k}}}</code> — ${escapeHtml(what)}</li>`).join("")}
+          </ul>
+        </details>
+
+        <div class="field full" style="margin-top:14px">
+          <label>Contract title</label>
+          <input id="tplTitle" value="${escapeHtml(template.title || "")}" placeholder="DJ Services Agreement">
+        </div>
+
+        <div id="tplSections">
+          ${template.sections.map((sec, i) => `
+            <div class="tpl-section" data-i="${i}">
+              <div class="tpl-head">
+                <span class="tpl-num">${i + 1}</span>
+                <input class="tpl-heading" data-i="${i}" value="${escapeHtml(sec.heading || "")}" placeholder="Section heading">
+                <button type="button" class="remove-line" data-tpl-up="${i}" title="Move up" ${i === 0 ? "disabled" : ""}>↑</button>
+                <button type="button" class="remove-line" data-tpl-down="${i}" title="Move down" ${i === template.sections.length - 1 ? "disabled" : ""}>↓</button>
+                <button type="button" class="remove-line" data-tpl-del="${i}" title="Remove section">✕</button>
+              </div>
+              <textarea class="tpl-body" data-i="${i}" rows="6" placeholder="The wording for this section…">${escapeHtml(sec.body || "")}</textarea>
+            </div>`).join("")}
+        </div>
+
+        <button type="button" class="btn btn-sm btn-ghost" id="tplAdd">+ Add a section</button>
+
+        <div class="modal-actions" style="flex-wrap:wrap">
+          <button type="button" class="btn btn-danger" id="tplReset">Reset to the standard wording</button>
+          <button type="button" class="btn" id="tplCancel">Cancel</button>
+          <button type="button" class="btn btn-primary" id="tplSave">Save template</button>
+        </div>`;
+    }
+
+    function mount() {
+      openModal(modalShell("Your contract template", body(), true), true);
+
+      $("#tplTitle").addEventListener("input", e => { template.title = e.target.value; });
+      $$(".tpl-heading").forEach(el => el.addEventListener("input", () => {
+        template.sections[Number(el.dataset.i)].heading = el.value;
+      }));
+      $$(".tpl-body").forEach(el => el.addEventListener("input", () => {
+        template.sections[Number(el.dataset.i)].body = el.value;
+      }));
+      $$("[data-tpl-del]").forEach(b => b.addEventListener("click", () => {
+        template.sections.splice(Number(b.dataset.tplDel), 1);
+        if (!template.sections.length) template.sections.push({ heading: "", body: "" });
+        mount();
+      }));
+      $$("[data-tpl-up]").forEach(b => b.addEventListener("click", () => {
+        const i = Number(b.dataset.tplUp);
+        [template.sections[i - 1], template.sections[i]] = [template.sections[i], template.sections[i - 1]];
+        mount();
+      }));
+      $$("[data-tpl-down]").forEach(b => b.addEventListener("click", () => {
+        const i = Number(b.dataset.tplDown);
+        [template.sections[i + 1], template.sections[i]] = [template.sections[i], template.sections[i + 1]];
+        mount();
+      }));
+      $("#tplAdd").addEventListener("click", () => {
+        template.sections.push({ heading: "", body: "" });
+        mount();
+      });
+      $("#tplReset").addEventListener("click", () => {
+        if (!confirm("Replace your wording with the standard template? Contracts you've already created keep their own wording.")) return;
+        state.settings.contractTemplate = defaultContractTemplate();
+        save();
+        openTemplateEditor(onDone);
+        toast("Template reset");
+      });
+      $("#tplCancel").addEventListener("click", () => (onDone ? onDone() : closeModal()));
+      $("#tplSave").addEventListener("click", () => {
+        state.settings.contractTemplate = {
+          title: (template.title || "Agreement").trim(),
+          sections: template.sections
+            .map(sec => ({ heading: (sec.heading || "").trim(), body: (sec.body || "").trim() }))
+            .filter(sec => sec.heading || sec.body),
+        };
+        save();
+        render();
+        toast("Template saved — new contracts will use it");
+        if (onDone) onDone(); else closeModal();
+      });
+    }
+
+    mount();
+  }
+
+  /* ---------- Option helpers ---------- */
+
+  function eventOptionsAll(selectedId) {
+    return [...state.events]
+      .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
+      .map(e => `<option value="${e.id}" ${e.id === selectedId ? "selected" : ""}>${escapeHtml(e.title)} — ${escapeHtml(fmtDateRange(e.date, eventEnd(e)))}</option>`)
+      .join("");
+  }
+
+  function invoiceOptions(selectedId) {
+    return [...state.invoices]
+      .sort((a, b) => (b.issueDate || "").localeCompare(a.issueDate || ""))
+      .map(i => `<option value="${i.id}" ${i.id === selectedId ? "selected" : ""}>${escapeHtml(i.number)} — ${escapeHtml(clientName(i.clientId))} (${money(invTotal(i))})</option>`)
+      .join("");
   }
 
   /* ================= LIVE SHARE LINK (quotes & invoices) ==============
@@ -3980,6 +5347,7 @@ const firebaseConfig = {
     stopSync();
     activeUid = null;
     sharePublished.clear();   // the next account must not inherit this one's "already published"
+    watchContracts();         // drops the listeners on the last account's contracts
     setCloudStatus(accountsMode() ? "signed-out" : "off");
     if (accountsMode() && !isGuest()) {
       state = emptyState();   // nothing of the last account stays on screen
@@ -4226,6 +5594,7 @@ const firebaseConfig = {
         // Catch up any live client links that changed while this device
         // was offline, or that another device couldn't publish.
         queueSharePush();
+        watchContracts();
         return;
       }
       if (!data) return;
@@ -4279,12 +5648,14 @@ const firebaseConfig = {
     if (!raw) return;
     let guestState;
     try { guestState = JSON.parse(raw); } catch { return; }
-    const count = (guestState.clients || []).length + (guestState.events || []).length + (guestState.invoices || []).length;
+    const count = (guestState.clients || []).length + (guestState.events || []).length
+      + (guestState.invoices || []).length + (guestState.contracts || []).length;
     if (!count) return;
     if (!confirm(`Bring the ${count} record${count === 1 ? "" : "s"} you created before signing up into this account?`)) return;
     state.clients = guestState.clients || [];
     state.events = guestState.events || [];
     state.invoices = (guestState.invoices || []).map(migrateInvoice);
+    state.contracts = guestState.contracts || [];
     const keptLocal = {};
     LOCAL_ONLY_SETTINGS.forEach(k => { keptLocal[k] = state.settings[k]; });
     state.settings = { ...state.settings, ...(guestState.settings || {}), ...keptLocal };
@@ -4300,6 +5671,7 @@ const firebaseConfig = {
       clients: data.clients || [],
       events: data.events || [],
       invoices: (data.invoices || []).map(migrateInvoice),
+      contracts: data.contracts || [],
     };
   }
 
@@ -4313,13 +5685,15 @@ const firebaseConfig = {
       cloud.applyingRemote = false;
     }
     cloud.lastSyncedAt = Date.now();
+    // A contract sent from another device needs watching from this one too.
+    watchContracts();
   }
 
   // Union by id — the cloud copy wins a tie, local-only records are kept.
   function mergeRemoteIntoLocal(data) {
     const remote = remoteToState(data);
     let added = 0;
-    ["clients", "events", "invoices"].forEach(key => {
+    ["clients", "events", "invoices", "contracts"].forEach(key => {
       const merged = new Map((remote[key] || []).map(r => [r.id, r]));
       (state[key] || []).forEach(localRec => {
         if (!merged.has(localRec.id)) { merged.set(localRec.id, localRec); added++; }
@@ -4344,6 +5718,7 @@ const firebaseConfig = {
     LOCAL_ONLY_SETTINGS.forEach(k => delete settings[k]);
     const payload = {
       settings, clients: state.clients, events: state.events, invoices: state.invoices,
+      contracts: state.contracts || [],
       deviceId, updatedAt: cloud.fs.serverTimestamp(), schema: 2,
     };
     if (JSON.stringify(payload).length > CLOUD_DOC_LIMIT) {
