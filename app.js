@@ -303,6 +303,95 @@
     return days;
   }
 
+  /* ---------------- A gig's running order ----------------
+     A wedding weekend is one booking with several functions, each on
+     its own date, at its own time, sometimes at its own venue. The
+     schedule holds those, and the contract and calendar read it back. */
+
+  function eventSchedule(e) {
+    return (e && Array.isArray(e.schedule) ? e.schedule : [])
+      .filter(r => (r.name || "").trim() || r.startTime)
+      .slice()
+      .sort((a, b) => (a.date || "").localeCompare(b.date || "")
+        || (a.startTime || "").localeCompare(b.startTime || ""));
+  }
+
+  function hasSchedule(e) { return eventSchedule(e).length > 0; }
+
+  function scheduleForDay(e, iso) {
+    return eventSchedule(e).filter(r => r.date === iso);
+  }
+
+  // [{ date, rows: [...] }], in date order.
+  function scheduleByDate(e) {
+    const days = [];
+    eventSchedule(e).forEach(row => {
+      const last = days[days.length - 1];
+      if (last && last.date === row.date) last.rows.push(row);
+      else days.push({ date: row.date, rows: [row] });
+    });
+    return days;
+  }
+
+  function scheduleRowTime(row) {
+    if (!row.startTime) return "";
+    return fmtTime(row.startTime) + (row.endTime ? " – " + fmtTime(row.endTime) : "");
+  }
+
+  // The venue is named only when the function moves somewhere other
+  // than the gig's own venue — otherwise it just repeats itself.
+  function scheduleRowLine(row, e) {
+    const time = scheduleRowTime(row);
+    const own = (row.venue || "").trim();
+    const gigName = ((e && e.venue) || "").trim();
+    const where = own && own.toLowerCase() !== gigName.toLowerCase() ? own : "";
+    return [row.name || "Function", time].filter(Boolean).join(": ")
+      + (where ? ` (${where})` : "");
+  }
+
+  // The {{eventSchedule}} placeholder: dates as sub-headings with their
+  // functions underneath, which is how a multi-day contract reads.
+  function scheduleText(e) {
+    if (!e) return "To be confirmed";
+    const days = scheduleByDate(e);
+    if (!days.length) {
+      const time = e.startTime ? fmtTime(e.startTime) + (e.endTime ? " – " + fmtTime(e.endTime) : "") : "";
+      return [fmtDateRange(e.date, eventEnd(e)), time].filter(Boolean).join("\n");
+    }
+    return days
+      .map(day => [fmtDate(day.date), ...day.rows.map(r => scheduleRowLine(r, e))].join("\n"))
+      .join("\n\n");
+  }
+
+  // Consecutive dates at the same venue collapse into one line. A
+  // function with no venue of its own happens at the gig's venue, and
+  // naming the gig's venue on a row means the same place as the gig —
+  // so both end up on the same line rather than repeated.
+  function venueText(e) {
+    if (!e) return "To be confirmed";
+    const gigName = (e.venue || "").trim();
+    const gigFull = [e.venue, e.address].filter(Boolean).join(" — ");
+    const rows = eventSchedule(e);
+    if (!rows.length) return gigFull || "To be confirmed";
+
+    const placeFor = r => {
+      const own = (r.venue || "").trim();
+      if (!own) return gigFull || "To be confirmed";
+      if (gigName && own.toLowerCase() === gigName.toLowerCase()) return gigFull;
+      return own;
+    };
+
+    const groups = [];
+    rows.forEach(r => {
+      const place = placeFor(r);
+      const last = groups[groups.length - 1];
+      if (last && last.place === place) { last.last = r.date; return; }
+      groups.push({ place, first: r.date, last: r.date });
+    });
+
+    return groups.map(g => `${fmtDateRange(g.first, g.last)}: ${g.place}`).join("\n");
+  }
+
   function fmtTime(t) {
     if (!t) return "";
     const [h, m] = t.split(":").map(Number);
@@ -932,12 +1021,63 @@
           <div class="field full"><label>Client needs &amp; requests</label><textarea name="needs" placeholder="Equipment, special songs, first dance, MC duties, uplighting…">${escapeHtml(val("needs"))}</textarea></div>
           <div class="field full"><label>Internal notes</label><textarea name="notes" placeholder="Load-in details, contact on site, parking…">${escapeHtml(val("notes"))}</textarea></div>
         </div>
+
+        <div class="section-label">Running order
+          <span class="section-hint">For a booking with more than one function — Grah Shanti, Mehndi, Sangeet, Baraat, Reception. Each one gets its own date, time and (if it moves) its own venue. Leave it empty for a single-set gig.</span>
+        </div>
+        <div id="scheduleRows"></div>
+        <button type="button" class="btn btn-sm btn-ghost" id="addScheduleRow">+ Add a function</button>
+
         <div class="modal-actions">
           ${ev ? `<button type="button" class="btn btn-danger" id="deleteEvent">Delete</button>` : ""}
           <button type="button" class="btn" id="cancelModal">Cancel</button>
           <button type="submit" class="btn btn-primary">${ev ? "Save changes" : "Add gig"}</button>
         </div>
       </form>`), true);
+
+    // Running order: edited in place, kept outside FormData.
+    const schedule = (ev && Array.isArray(ev.schedule) ? JSON.parse(JSON.stringify(ev.schedule)) : []);
+    const scheduleHost = $("#scheduleRows");
+    const form = $("#eventForm");
+
+    function renderSchedule() {
+      scheduleHost.innerHTML = schedule.map((row, i) => `
+        <div class="sched-row" data-i="${i}">
+          <input class="sch" data-i="${i}" data-f="date" type="date" value="${escapeHtml(row.date || "")}" title="Date">
+          <input class="sch" data-i="${i}" data-f="name" value="${escapeHtml(row.name || "")}" placeholder="Function (e.g. Sangeet)">
+          <input class="sch" data-i="${i}" data-f="startTime" type="time" value="${escapeHtml(row.startTime || "")}" title="Starts">
+          <input class="sch" data-i="${i}" data-f="endTime" type="time" value="${escapeHtml(row.endTime || "")}" title="Ends">
+          <input class="sch" data-i="${i}" data-f="venue" value="${escapeHtml(row.venue || "")}" placeholder="Venue (if different)">
+          <button type="button" class="remove-line" data-sch-del="${i}" title="Remove">✕</button>
+        </div>`).join("");
+
+      $$("[data-sch-del]", scheduleHost).forEach(b => b.addEventListener("click", () => {
+        schedule.splice(Number(b.dataset.schDel), 1);
+        renderSchedule();
+      }));
+    }
+
+    scheduleHost.addEventListener("input", e => {
+      const el = e.target;
+      if (!el.classList.contains("sch")) return;
+      const row = schedule[Number(el.dataset.i)];
+      if (row) row[el.dataset.f] = el.value;
+    });
+
+    $("#addScheduleRow").addEventListener("click", () => {
+      const last = schedule[schedule.length - 1];
+      schedule.push({
+        id: uid(),
+        // Start from the day the last one was on, or the gig's first day.
+        date: (last && last.date) || form.date.value || val("date", todayISO()),
+        name: "", startTime: "", endTime: "", venue: "",
+      });
+      renderSchedule();
+      const inputs = $$(".sched-row .sch", scheduleHost);
+      inputs[inputs.length - 5]?.focus();
+    });
+
+    renderSchedule();
 
     $("#cancelModal").addEventListener("click", closeModal);
     $("#deleteEvent")?.addEventListener("click", () => {
@@ -954,6 +1094,27 @@
         return;
       }
       if (data.endDate === data.date) data.endDate = "";   // single day
+
+      data.schedule = schedule
+        .filter(r => (r.name || "").trim() || r.startTime)
+        .map(r => ({
+          id: r.id || uid(),
+          date: r.date || data.date,
+          name: (r.name || "").trim(),
+          startTime: r.startTime || "",
+          endTime: r.endTime || "",
+          venue: (r.venue || "").trim(),
+        }))
+        .sort((a, b) => (a.date || "").localeCompare(b.date || "")
+          || (a.startTime || "").localeCompare(b.startTime || ""));
+
+      // A running order that runs past the end date should widen it
+      // rather than silently fall off the calendar.
+      const lastDay = data.schedule.reduce((m, r) => (r.date > m ? r.date : m), data.endDate || data.date);
+      if (lastDay > (data.endDate || data.date)) data.endDate = lastDay;
+      const firstDay = data.schedule.reduce((m, r) => (r.date && r.date < m ? r.date : m), data.date);
+      if (firstDay < data.date) data.date = firstDay;
+
       if (ev) Object.assign(ev, data);
       else state.events.push({ id: uid(), ...data });
       save(); closeModal(); render();
@@ -972,13 +1133,25 @@
       <div style="margin-bottom:14px">${badge(e.status)}</div>
       <div class="detail-grid">
         <div class="detail-item"><div class="lbl">Date${isMultiDay(e) ? "s" : ""}</div><div class="val">${isMultiDay(e) ? escapeHtml(fmtDateRange(e.date, eventEnd(e))) : fmtDateShort(e.date)}</div></div>
-        <div class="detail-item"><div class="lbl">Time</div><div class="val">${e.startTime ? fmtTime(e.startTime) + (e.endTime ? " – " + fmtTime(e.endTime) : "") : "—"}</div></div>
+        <div class="detail-item"><div class="lbl">Time</div><div class="val">${hasSchedule(e)
+          ? `${eventSchedule(e).length} functions <span style="color:var(--muted);font-size:12.5px">(below)</span>`
+          : e.startTime ? fmtTime(e.startTime) + (e.endTime ? " – " + fmtTime(e.endTime) : "") : "—"}</div></div>
         <div class="detail-item"><div class="lbl">Type</div><div class="val">${escapeHtml(e.type || "—")}</div></div>
         <div class="detail-item"><div class="lbl">Client</div><div class="val">${c ? `<a href="#" data-open-client="${c.id}">${escapeHtml(c.name)}</a>` : "—"}</div></div>
         <div class="detail-item"><div class="lbl">Venue</div><div class="val">${escapeHtml(e.venue || "—")}${e.address ? `<br><span style="color:var(--muted);font-size:12.5px">${escapeHtml(e.address)}</span>` : ""}</div></div>
         <div class="detail-item"><div class="lbl">Guests</div><div class="val">${escapeHtml(e.guestCount || "—")}</div></div>
         <div class="detail-item"><div class="lbl">Fee</div><div class="val"><strong>${e.fee ? money(e.fee) : "—"}</strong></div></div>
       </div>
+      ${hasSchedule(e) ? `<div class="section-label">Running order</div>
+        <div class="table-wrap"><table class="sched-table"><tbody>
+          ${scheduleByDate(e).map(day => `
+            <tr class="sched-day"><td colspan="3">${escapeHtml(fmtDateShort(day.date))}</td></tr>
+            ${day.rows.map(r => `<tr>
+              <td>${escapeHtml(r.name || "Function")}</td>
+              <td class="nowrap">${escapeHtml(scheduleRowTime(r)) || "—"}</td>
+              <td>${escapeHtml(r.venue || "")}</td>
+            </tr>`).join("")}`).join("")}
+        </tbody></table></div>` : ""}
       ${e.needs ? `<div class="section-label">Client needs &amp; requests</div><div class="notes-box">${escapeHtml(e.needs)}</div>` : ""}
       ${e.notes ? `<div class="section-label">Internal notes</div><div class="notes-box">${escapeHtml(e.notes)}</div>` : ""}
       ${invs.length ? `<div class="section-label">Linked invoices</div>
@@ -2332,11 +2505,22 @@
           ${cells.map(cell => `
             <div class="cal-cell ${cell.other ? "other-month" : ""} ${cell.iso === today ? "today" : ""}">
               <div class="cal-daynum">${cell.day}</div>
-              ${(eventsByDate[cell.iso] || []).map(({ ev: e, continues }) => `
+              ${(eventsByDate[cell.iso] || []).map(({ ev: e, continues }) => {
+                // On a day with a running order, the day's own functions
+                // are more use than the booking's name repeated.
+                const today = scheduleForDay(e, cell.iso);
+                const label = today.length
+                  ? `${continues ? "↳ " : ""}${escapeHtml(e.title)}`
+                  : `${continues ? "↳ " : e.startTime ? fmtTime(e.startTime).replace(" ", "") + " " : ""}${escapeHtml(e.title)}`;
+                return `
                 <div class="cal-event status-${e.status}${isCall(e) ? " type-call" : ""}${continues ? " continues" : ""}" data-open-event="${e.id}"
-                     title="${escapeHtml(e.title)} — ${escapeHtml(clientName(e.clientId))}${isMultiDay(e) ? ` (${fmtDateRange(e.date, eventEnd(e))})` : ""}">
-                  ${continues ? "↳ " : e.startTime ? fmtTime(e.startTime).replace(" ", "") + " " : ""}${escapeHtml(e.title)}
-                </div>`).join("")}
+                     title="${escapeHtml(e.title)} — ${escapeHtml(clientName(e.clientId))}${isMultiDay(e) ? ` (${fmtDateRange(e.date, eventEnd(e))})` : ""}${today.length ? "\n" + today.map(r => scheduleRowLine(r, e)).join("\n") : ""}">
+                  ${label}
+                </div>
+                ${today.map(r => `<div class="cal-sub" data-open-event="${e.id}" title="${escapeHtml(scheduleRowLine(r, e))}">
+                  ${r.startTime ? escapeHtml(fmtTime(r.startTime).replace(" ", "")) + " " : ""}${escapeHtml(r.name || "Function")}
+                </div>`).join("")}`;
+              }).join("")}
               ${(googleByDate[cell.iso] || []).map((e, i) => `
                 <div class="cal-event gcal-event${e.fromCalendly ? " is-call" : ""}" data-gcal="${cell.iso}|${i}" title="${escapeHtml(e.title)}${e.startTime ? " · " + fmtTime(e.startTime) : ""}">
                   ${e.startTime ? fmtTime(e.startTime).replace(" ", "") + " " : ""}${escapeHtml(e.title)}
@@ -3507,6 +3691,8 @@ const firebaseConfig = {
     ["eventDate", "the gig's date (or dates)"],
     ["eventTime", "the gig's start and end time"],
     ["eventVenue", "venue and address"],
+    ["eventSchedule", "every function, under its own date"],
+    ["eventVenues", "each venue with the dates it covers"],
     ["fee", "the agreed fee"],
     ["depositPercent", "deposit percentage"],
     ["overtimeRate", "overtime rate per hour"],
@@ -3540,6 +3726,8 @@ const firebaseConfig = {
       eventDate: ev ? fmtDateRange(ev.date, eventEnd(ev)) : "To be confirmed",
       eventTime: time,
       eventVenue: ev ? [ev.venue, ev.address].filter(Boolean).join(" — ") || "To be confirmed" : "To be confirmed",
+      eventSchedule: ev ? scheduleText(ev) : "To be confirmed",
+      eventVenues: ev ? venueText(ev) : "To be confirmed",
       fee: money(Number(t.fee) || 0),
       depositPercent: `${Number(t.depositPercent) || 0}%`,
       overtimeRate: money(Number(t.overtimeRate) || 0),
@@ -4512,15 +4700,17 @@ const firebaseConfig = {
     const sections = [];
     let current = null;
 
+    let numbered = false;    // the contract numbers its sections
     const isHeading = line => {
       const t = line.trim();
       if (!t || t.length > 80) return false;
       // "1. THE PARTIES." / "2) Event Details:" / "Section 4 — Fees"
-      if (/^\s*(\d{1,2}|[ivxIVX]{1,4})\s*[.)]\s+\S/.test(t)) return true;
-      // "Fees:" on its own line
-      if (/^[A-Z][^.!?]{2,60}:$/.test(t)) return true;
+      if (/^\s*(\d{1,2}|[ivxIVX]{1,4})\s*[.)]\s+\S/.test(t)) { numbered = true; return true; }
       // "CANCELLATION POLICY"
       if (/^[A-Z0-9 &'(),./-]{4,60}$/.test(t) && /[A-Z]{3}/.test(t)) return true;
+      // "Fees:" on its own line — but once sections are numbered, a
+      // label like "Event Time:" belongs to the section it sits in.
+      if (!numbered && /^[A-Z][^.!?]{2,60}:$/.test(t)) return true;
       return false;
     };
 

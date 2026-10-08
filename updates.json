@@ -1,6 +1,17 @@
 {
   "updates": [
     {
+      "title": "Running order for multi-day bookings",
+      "date": "2026-10-08",
+      "notes": [
+        "A wedding weekend is one booking with several functions, so a gig now takes a running order: each function with its own date, start and end time, and its own venue when it moves.",
+        "The calendar lists each day's functions under the booking, so Oct 17 reads Baraat, Wedding, Cocktail Hour, Reception instead of just the booking's name four times.",
+        "In your contract, {{eventSchedule}} writes the running order out with each date as its own sub-heading, and {{eventVenues}} lists each venue with the dates it covers.",
+        "Adding a function outside the dates you set widens the booking rather than letting it fall off the calendar.",
+        "A single-set gig is unchanged — leave the running order empty and the contract uses the gig's own date and time as before."
+      ]
+    },
+    {
       "title": "Contracts you can send and sign",
       "date": "2026-10-08",
       "notes": [

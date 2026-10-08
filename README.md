@@ -11,6 +11,7 @@ Run it for yourself, or [host it for many DJs](#cloud-sync-and-multi-user-setup)
 - **Dashboard** — upcoming gigs, money actually collected this year (deposits included), outstanding balances, and overdue alerts at a glance
 - **Clients** — contact info, how they found you, music preferences / do-not-play notes, plus each client's full gig & invoice history and lifetime revenue
 - **Gigs & Events** — track every booking (wedding, corporate, birthday, club night…) with venue, times, guest count, fee, client needs (equipment, special songs, MC duties) and internal notes. Statuses: Inquiry → Booked → Completed. Multi-day bookings take an **end date** and run across every day on the calendar.
+  - 🗂 **Running order** — a wedding weekend is one booking with several functions. Give each one its own date, time and (if it moves) its own venue — Grah Shanti, Mehndi, Sangeet, Baraat, Reception — and they show on the calendar under their day, on the gig, and in the contract as dated sub-sections.
 - **Invoices** — powered by the [RND Invoice Generator](https://github.com/vermelR/Invoice-Generator) format and design: events/sections with nested packages and included items, COMP toggles, named discounts, the hotel & parking clause, and the signature black/orange/blue RND layout. Plus auto-numbering and status tracking (Draft / Sent / Paid, with automatic Overdue detection). Create one straight from a gig and it pre-fills the fee.
   - 📎 **Upload an existing invoice** — already made one elsewhere, or migrating from another tool? Upload the PDF instead of rebuilding it. It's tracked like any other invoice (status, deposits, balance, client and gig links), previews in the app, downloads, and emails to the client as an attachment. Files under 700 KB sync to your other devices; larger ones (up to 10 MB) stay on the device they were uploaded from.
   - 💵 **Deposits & partial payments** — log each payment as it lands (amount, date, method, description) and the invoice tracks *Received* vs *Balance due* automatically, marking itself **Partial** and then **Paid** when the balance clears. One-tap buttons for a 25%/50% deposit or the full remaining balance.
@@ -135,6 +136,8 @@ Push the change and the live site now opens on a login screen. Anyone can create
 ### Bring your own contract
 
 Nobody is handed somebody else's agreement. A new account starts with no template at all, and the first contract walks you through one of two routes: **paste the contract you already use** — copied out of Word, Google Docs or a PDF, split into sections on its numbered or titled lines — or **start from a blank outline** of the standard headings with nothing written in them. Either way the wording is yours.
+
+For a booking with several functions, `{{eventSchedule}}` writes the running order out under each date and `{{eventVenues}}` lists each venue with the dates it covers, so a three-day wedding reads the way it should instead of being squeezed into one date and time.
 
 Where your contract names a particular client, date or fee, swap that bit for a placeholder (`{{clientName}}`, `{{eventDate}}`, `{{fee}}`, `{{depositPercent}}` and so on — the editor lists them all and drops them in at the cursor) and it fills itself in on every contract after that.
 
