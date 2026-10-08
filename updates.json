@@ -1,3 +1,16 @@
 {
-  "updates": []
+  "updates": [
+    {
+      "title": "Live quote links",
+      "date": "2026-10-08",
+      "notes": [
+        "Share any quote or invoice on a private link — open it and hit \"🔗 Share live link\", then copy it, text it, or email it through Gmail or your mail app.",
+        "The page keeps itself current: change a price, add a package or log a deposit and what the client is looking at updates on its own, even if they already have it open. No re-sending.",
+        "They see the quote, what's been paid and what's still owed — never your other clients, their own contact details, or your internal gig notes.",
+        "\"Stop sharing\" switches a link off; anyone still holding it gets a short note instead of a broken page. Sharing again creates a brand-new link and the old one stays dead.",
+        "Deleting an invoice takes its live link down with it.",
+        "Needs cloud sync, so the link only shows up when you're signed in."
+      ]
+    }
+  ]
 }
