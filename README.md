@@ -126,7 +126,7 @@ Out of the box the app saves to the browser it's opened in. Add a free Firebase 
 3. **Paste it into `firebase-config.js`** in this repo (replacing the `YOUR_...` placeholders) and commit. These values are meant to be public — your data is protected by the security rules in step 6, not by hiding the keys.
 4. **Turn on sign-in methods**: *Authentication → Get started → Sign-in method*, enable **Email/Password** and **Google**.
 5. **Create the database**: *Firestore Database → Create database* → start in **production mode** → pick a region near you.
-6. **Publish the security rules** — this is the step that keeps each account's data private. Open *Firestore Database → Rules*, paste the contents of [`firestore.rules`](firestore.rules), and click **Publish**. Re-paste them whenever this file changes in the repo; the current version also covers uploaded invoice PDFs and live quote links.
+6. **Publish the security rules** — this is the step that keeps each account's data private. If you deploy with Firebase Hosting (below) this happens automatically. Otherwise open *Firestore Database → Rules*, paste the contents of [`firestore.rules`](firestore.rules), and click **Publish**. Re-paste them whenever this file changes in the repo. **This version's app needs this version's rules**, so publish them before or together with the new code.
 7. **Authorize your domain**: *Authentication → Settings → Authorized domains* → add `vermelr.github.io` (and any custom domain). Without this, Google sign-in is blocked.
 
 Push the change and the live site now opens on a login screen. Anyone can create an account and start managing their own DJ business.
@@ -145,7 +145,7 @@ Where your contract names a particular client, date or fee, swap that bit for a 
 
 Each contract you send gets its own `contracts/{id}` document, published at a 32-character random link. The rules let anyone with the exact link read that one document — nothing can list the collection — and allow exactly **one** write without signing in: adding the client's signature, once, to a contract that is still live and unsigned. Any other change to the document is refused unless it comes from your account. Once signed, the contract can't be signed again, and withdrawing or voiding it closes the link for good.
 
-A typed signature is stored as the name itself; a drawn one as a small image. Both are kept with the date and time they were given, on the contract record in your account.
+A typed signature is stored as the name itself; a drawn one as a small image. Both are kept with the date and time they were given, on the contract record in your account. That time comes from Firebase's own clock: the rules refuse a signature unless its timestamp is the moment the server received it, so nobody can backdate or postdate a signature from their device.
 
 That puts it on the same footing as the common e-signing services for an ordinary services agreement: the signer had the document in front of them, agreed to it explicitly, and the record shows what was signed and when. It is not a qualified/notarised signature, and it isn't legal advice — if a particular client or venue demands a specific signing standard, use whatever they require.
 
@@ -155,7 +155,57 @@ A shared quote lives in its own `shared/{id}` document, separate from your accou
 
 ### Free tier, in plain terms
 
-Firestore's free allowance is 50,000 reads and 20,000 writes per day, plus 1 GB stored. This app stores each account as a single small document and only writes when something changes, so a busy DJ uses a tiny fraction of that. Hundreds of users would still fit comfortably.
+Firestore's free allowance is 50,000 reads and 20,000 writes per day, plus 1 GB stored. Each client, gig, invoice and contract is its own small document, and a save only writes the records that actually changed, so a busy DJ uses a tiny fraction of that. Hundreds of users would still fit comfortably.
+
+### How account data is stored
+
+```
+djclientflow/{uid}                  settings
+djclientflow/{uid}/clients/{id}     one document per client
+djclientflow/{uid}/events/{id}      one per gig
+djclientflow/{uid}/invoices/{id}    one per invoice
+djclientflow/{uid}/contracts/{id}   one per contract
+djclientflow/{uid}/files/{id}       uploaded invoice PDFs
+djclientflow/{uid}/backups/{id}     copy kept when an account was moved to this layout
+```
+
+Firestore caps a single document at 1 MB. Earlier versions kept a whole account in one document, which a busy DJ (lots of signed contracts with drawn signatures, say) would eventually fill, at which point saving stops. Accounts in that older format are moved over automatically the first time they sign in: a full copy of the old document is saved under `backups/` first, then every record is written as its own document. The old lists stay in the account document, frozen, for a week so a tab still running an older copy of the app keeps showing data; the rules stop that older copy from writing the old format back. After a week the next sign-in clears them.
+
+## 🔒 Hosting on Firebase (recommended)
+
+GitHub Pages works, but every repo you publish shares one address (`yourname.github.io`), and the browser treats that whole address as one site. Anything stored by one page there, including this app's offline copy of your client list, can be read by any other page you host there. Firebase Hosting gives the app its own address, lets it send security headers GitHub Pages can't, and deploys your security rules from the repo instead of by copy and paste.
+
+`firebase.json` sets these headers on every page:
+
+- **Content-Security-Policy**: scripts load only from this site and the Google/Firebase hosts the app uses; no inline scripts, no plugins, and no other site can frame the app.
+- **Strict-Transport-Security**: browsers only ever use HTTPS.
+- **X-Frame-Options**, **X-Content-Type-Options**, **Referrer-Policy**, **Permissions-Policy**: clickjacking, MIME sniffing, leaky referrers and unused device permissions are all switched off.
+
+### One-time setup
+
+1. Install the tools: `npm install` (Node 20+; the app itself still has no dependencies).
+2. Sign in and deploy once by hand: `npx firebase login`, then `npm run deploy`. Your site is live at `https://rnd---client-management-b21e5.web.app`.
+3. **Add your own domain**: Firebase Console → Hosting → *Add custom domain* (for example `clients.yourbusiness.com`) and follow the DNS steps.
+4. Add the new domain(s) to *Authentication → Settings → Authorized domains*.
+5. **Automatic deploys**: in Google Cloud → IAM → Service accounts, create a key for a service account with the *Firebase Hosting Admin* and *Firebase Rules Admin* roles. Paste the JSON into the repo's *Settings → Secrets and variables → Actions* as `FIREBASE_SERVICE_ACCOUNT`. From then on every push runs the security-rules tests and, if they pass, deploys the site and rules together.
+6. When the Firebase address works for you, turn off GitHub Pages (*Settings → Pages*) and remove `vermelr.github.io` from Authorized domains, so there's only one copy of the app.
+
+### Lock down the API key
+
+The Firebase web config is public by design, but you can stop anyone else's site from using it. In Google Cloud → *APIs & Services → Credentials*, open the "Browser key" Firebase created and set **Application restrictions → Websites** to your domains (`https://clients.yourbusiness.com/*`, `https://rnd---client-management-b21e5.web.app/*`, `https://rnd---client-management-b21e5.firebaseapp.com/*`). Also turn on *Authentication → Settings → User account management → Email enumeration protection*.
+
+### App Check
+
+App Check makes Firebase accept requests only from your site, which stops scripted fake sign-ups and anyone poking at your database with a copied config.
+
+1. Firebase Console → App Check → register the web app with **reCAPTCHA Enterprise** and copy the site key.
+2. Paste it into `firebase-config.js` as `window.DJCF_APPCHECK_SITE_KEY`.
+3. Deploy, use the app for a few days, and check App Check's metrics show your traffic as verified.
+4. Then click **Enforce** for Firestore and Authentication.
+
+### Testing the security rules
+
+`npm test` starts the Firestore emulator (needs Java 21) and runs `tests/firestore.rules.test.mjs`: account privacy, the old-format lock, and every way someone might try to tamper with a contract signature.
 
 ## 📱 Install it as an app
 

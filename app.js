@@ -4710,12 +4710,20 @@ const firebaseConfig = {
     if (ct.client && ct.client.signedAt) return;        // already recorded
 
     const sig = data.clientSignature;
+    // The server's clock is the record that counts: the security rules
+    // force it to the moment the signature was written. The signer's
+    // own device clock is kept alongside it, but it can be wrong or
+    // faked, so it's only a fallback for older signatures.
+    const serverAt = sig.signedAtServer && typeof sig.signedAtServer.toDate === "function"
+      ? sig.signedAtServer.toDate().toISOString() : "";
     ct.client = {
       kind: sig.kind === "drawn" ? "drawn" : "typed",
       name: sig.name || clientName(ct.clientId),
       email: sig.email || "",
       dataUrl: sig.dataUrl || "",
-      signedAt: sig.signedAt || new Date().toISOString(),
+      signedAt: serverAt || sig.signedAt || new Date().toISOString(),
+      deviceSignedAt: sig.signedAt || "",
+      serverTimed: !!serverAt,
     };
     save();
     render();
@@ -5521,7 +5529,7 @@ const firebaseConfig = {
   const DEVICE_KEY = "djclientflow.deviceId";
   const LINKED_KEY = "djclientflow.linkedUid";
   const PRELINK_BACKUP_KEY = BASE_KEY + ".prelink-backup";
-  const CLOUD_DOC_LIMIT = 900000; // Firestore caps a document at 1 MB.
+  const CLOUD_DOC_LIMIT = 900000; // Firestore caps a document at 1 MB; keep headroom.
 
   let deviceId = localStorage.getItem(DEVICE_KEY);
   if (!deviceId) { deviceId = uid(); localStorage.setItem(DEVICE_KEY, deviceId); }
@@ -5529,8 +5537,10 @@ const firebaseConfig = {
   const cloud = {
     status: "off", // off | connecting | signed-out | live | error
     user: null, error: "", lastSyncedAt: null,
-    auth: null, db: null, docRef: null, unsub: null,
+    auth: null, db: null, docRef: null, unsubs: [],
     fs: null, authMod: null, applyingRemote: false, pushTimer: null, booted: false,
+    known: new Map(), seq: new Map(), settingsJson: null, rootSchema: 0,
+    legacyCleanup: false, ready: false,
   };
 
   // Settings that stay on this device: the Firebase keys are needed
@@ -5651,6 +5661,8 @@ const firebaseConfig = {
       cloud.fs = fsMod;
       cloud.authMod = authMod;
       const app = appMod.initializeApp(activeConfig());
+      // App Check must start before the first Firestore or Auth call.
+      if (window.DJCF_startAppCheck) await window.DJCF_startAppCheck(app, FIREBASE_VERSION);
       cloud.auth = authMod.getAuth(app);
       // Offline cache: the app still works with no connection and
       // queues writes until it is back.
@@ -5919,45 +5931,295 @@ const firebaseConfig = {
     }
   }
 
+  /* ---------- Per-record cloud storage ----------
+     Each client, gig, invoice and contract is its own document:
+
+       djclientflow/{uid}                     settings + bookkeeping
+       djclientflow/{uid}/clients/{id}        { data, seq, deviceId, updatedAt }
+       djclientflow/{uid}/events/{id}         …same for gigs
+       djclientflow/{uid}/invoices/{id}
+       djclientflow/{uid}/contracts/{id}
+
+     Firestore caps one document at 1 MB, so keeping a whole account in
+     a single document (schema 2) would eventually stop saving for a
+     busy DJ. Split up, only a single oversized record could ever hit
+     the cap, and saving one change writes one small document instead
+     of the entire account.
+
+     `seq` keeps records in the order they were added, which is the
+     order the app has always shown them in.
+
+     Accounts still in the old single-document format are moved over
+     automatically the first time they sign in on this version. A
+     copy of the old document is saved under backups/ first, and the
+     old lists are left in place, frozen, for a week so a tab still
+     running an older copy of the app keeps showing data rather than
+     going blank. The security rules stop that older copy from writing
+     the whole account back into the old format. */
+
+  const SYNC_SECTIONS = ["clients", "events", "invoices", "contracts"];
+  const SYNC_SCHEMA = 3;
+  const LEGACY_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
+
+  let seqCounter = 0;
+  function nextSeq() {
+    seqCounter = (seqCounter + 1) % 1000;
+    return Date.now() * 1000 + seqCounter;
+  }
+
+  // JSON with keys in a fixed order. Firestore hands maps back with
+  // their keys sorted, so a plain JSON.stringify of the same record
+  // could differ only by key order and look like an edit.
+  function stableJson(v) {
+    if (Array.isArray(v)) return "[" + v.map(x => stableJson(x === undefined ? null : x)).join(",") + "]";
+    if (v && typeof v === "object") {
+      return "{" + Object.keys(v).sort()
+        .filter(k => v[k] !== undefined && typeof v[k] !== "function")
+        .map(k => JSON.stringify(k) + ":" + stableJson(v[k])).join(",") + "}";
+    }
+    return JSON.stringify(v === undefined ? null : v);
+  }
+
+  function recKey(section, id) { return section + "/" + id; }
+
+  function recDocRef(section, id) {
+    return cloud.fs.doc(cloud.db, "djclientflow", cloud.user.uid, section, id);
+  }
+
+  function hasLegacyLists(root) {
+    return !!root && SYNC_SECTIONS.some(s => Array.isArray(root[s]));
+  }
+
+  function tsMillis(t) {
+    return t && typeof t.toMillis === "function" ? t.toMillis() : 0;
+  }
+
+  function cloudSettings() {
+    const settings = { ...state.settings };
+    LOCAL_ONLY_SETTINGS.forEach(k => delete settings[k]);
+    return settings;
+  }
+
+  function resetSyncMemory() {
+    cloud.known = new Map();      // "section/id" -> stableJson of what the cloud holds
+    cloud.seq = new Map();        // "section/id" -> order number
+    cloud.settingsJson = null;    // stableJson of the cloud's settings
+    cloud.rootSchema = 0;
+    cloud.legacyCleanup = false;
+    cloud.ready = false;
+  }
+
   function stopSync() {
-    if (cloud.unsub) { cloud.unsub(); cloud.unsub = null; }
+    (cloud.unsubs || []).forEach(u => { try { u(); } catch { /* already gone */ } });
+    cloud.unsubs = [];
+    clearTimeout(cloud.pushTimer);
     cloud.docRef = null;
+    resetSyncMemory();
   }
 
   function startSync(user) {
-    const { doc, onSnapshot } = cloud.fs;
+    const { doc, collection, onSnapshot } = cloud.fs;
     stopSync();
-    cloud.docRef = doc(cloud.db, "djclientflow", user.uid);
-    let first = true;
+    const uidNow = user.uid;
+    const rootRef = doc(cloud.db, "djclientflow", uidNow);
+    cloud.docRef = rootRef;
     setCloudStatus("connecting");
 
-    cloud.unsub = onSnapshot(cloud.docRef, { includeMetadataChanges: true }, snap => {
-      // Skip the echo of our own not-yet-acknowledged write.
-      if (snap.metadata.hasPendingWrites) return;
-      const data = snap.exists() ? snap.data() : null;
+    const isCurrent = () => cloud.docRef === rootRef;
+    const first = { root: null, records: {}, loaded: new Set() };
 
-      if (first) {
-        first = false;
-        reconcileFirstSync(user, data);
-        setCloudStatus("live");
-        // Catch up any live client links that changed while this device
-        // was offline, or that another device couldn't publish.
-        queueSharePush();
-        watchContracts();
-        return;
-      }
-      if (!data) return;
-      cloud.lastSyncedAt = Date.now();
-      if (data.deviceId === deviceId) { setCloudStatus("live"); return; }
-      applyRemote(data);
-      toast("Updated from another device ☁️");
-      setCloudStatus("live");
-    }, err => {
+    const onError = err => {
+      if (!isCurrent()) return;
       console.error("Sync listener failed", err);
       setCloudStatus("error", err?.code === "permission-denied"
         ? "Firestore rules are blocking access — see the README setup step."
         : "Lost connection to the cloud; local saving still works.");
+    };
+
+    const markLoaded = part => {
+      first.loaded.add(part);
+      if (!cloud.ready && first.loaded.size === SYNC_SECTIONS.length + 1) finishFirstLoad(user, first);
+    };
+
+    cloud.unsubs.push(onSnapshot(rootRef, snap => {
+      if (!isCurrent()) return;
+      const data = snap.exists() ? snap.data() : null;
+      if (!cloud.ready) { first.root = data; markLoaded("root"); return; }
+      if (snap.metadata.hasPendingWrites || !data) return;
+      applyRemoteRoot(data);
+    }, onError));
+
+    SYNC_SECTIONS.forEach(section => {
+      cloud.unsubs.push(onSnapshot(collection(cloud.db, "djclientflow", uidNow, section), snap => {
+        if (!isCurrent()) return;
+        if (!cloud.ready) {
+          first.records[section] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          markLoaded(section);
+          return;
+        }
+        applyRemoteRecords(section, snap.docChanges());
+      }, onError));
     });
+  }
+
+  // All five listeners have reported once: assemble the cloud's copy
+  // of the account and settle it against this device's.
+  function finishFirstLoad(user, first) {
+    const root = first.root;
+    const legacy = hasLegacyLists(root) && root.schema !== SYNC_SCHEMA;
+    cloud.rootSchema = root ? (root.schema || 0) : 0;
+    cloud.settingsJson = root && root.settings && !legacy ? stableJson(root.settings) : null;
+    if (root && root.schema === SYNC_SCHEMA && hasLegacyLists(root)
+        && Date.now() - tsMillis(root.migratedAt) > LEGACY_KEEP_MS && tsMillis(root.migratedAt) > 0) {
+      cloud.legacyCleanup = true;
+    }
+
+    const remote = { settings: root ? root.settings : undefined };
+    let anything = !!root;
+    SYNC_SECTIONS.forEach(section => {
+      const docs = (first.records[section] || []).filter(d => d.data && typeof d.data === "object");
+      const byId = new Map();
+      docs.forEach(d => {
+        const key = recKey(section, d.id);
+        const seq = typeof d.seq === "number" ? d.seq : nextSeq();
+        cloud.known.set(key, stableJson(d.data));
+        cloud.seq.set(key, seq);
+        byId.set(d.id, { rec: d.data, seq, at: tsMillis(d.updatedAt) });
+      });
+
+      if (legacy) {
+        // Old single-document lists: anything missing from the new
+        // per-record copy is brought across; where both have a record,
+        // the more recently written one wins.
+        const rootAt = tsMillis(root.updatedAt);
+        (root[section] || []).forEach((rec, i) => {
+          if (!rec || !rec.id) return;
+          const have = byId.get(rec.id);
+          if (!have) byId.set(rec.id, { rec, seq: i, at: rootAt });
+          else if (rootAt > have.at) byId.set(rec.id, { ...have, rec });
+        });
+      }
+
+      remote[section] = [...byId.values()].sort((a, b) => a.seq - b.seq).map(x => x.rec);
+      [...byId.entries()].forEach(([id, x]) => {
+        if (!cloud.seq.has(recKey(section, id))) cloud.seq.set(recKey(section, id), x.seq);
+      });
+      if (remote[section].length) anything = true;
+    });
+
+    if (legacy) backUpLegacyRoot(user, root);
+
+    cloud.ready = true;
+    setCloudStatus("live");
+    reconcileFirstSync(user, anything ? remote : null);
+    // Brings the cloud in line with what's on screen: finishes a move
+    // from the old format, and saves anything the merge added.
+    pushCloud(true);
+    // Catch up any live client links that changed while this device
+    // was offline, or that another device couldn't publish.
+    queueSharePush();
+    watchContracts();
+  }
+
+  // A full copy of the old single document, kept before anything is
+  // moved, so the move itself can never lose data.
+  function backUpLegacyRoot(user, root) {
+    const { doc, setDoc, serverTimestamp } = cloud.fs;
+    const ref = doc(cloud.db, "djclientflow", user.uid, "backups", "schema2-" + Date.now());
+    setDoc(ref, { ...root, backedUpAt: serverTimestamp() })
+      .catch(e => console.warn("Could not back up the old account document", e));
+  }
+
+  function insertBySeq(section, rec, seq) {
+    const list = state[section] || (state[section] = []);
+    const at = list.findIndex(r => {
+      const s = cloud.seq.get(recKey(section, r.id));
+      return s == null || s > seq;
+    });
+    if (at < 0) list.push(rec); else list.splice(at, 0, rec);
+  }
+
+  function applyRemoteRecords(section, changes) {
+    let changed = 0;
+    changes.forEach(ch => {
+      // Our own writes come back before the server confirms them; they
+      // are already on screen.
+      if (ch.doc.metadata.hasPendingWrites) return;
+      const id = ch.doc.id;
+      const key = recKey(section, id);
+
+      if (ch.type === "removed") {
+        if (!cloud.known.has(key)) return;           // we deleted it ourselves
+        cloud.known.delete(key);
+        cloud.seq.delete(key);
+        const before = (state[section] || []).length;
+        state[section] = (state[section] || []).filter(r => r.id !== id);
+        if (state[section].length !== before) changed++;
+        return;
+      }
+
+      const d = ch.doc.data();
+      if (!d || !d.data || typeof d.data !== "object") return;
+      const json = stableJson(d.data);
+      if (cloud.known.get(key) === json) return;     // nothing new
+      const seq = typeof d.seq === "number" ? d.seq : (cloud.seq.get(key) ?? nextSeq());
+      cloud.known.set(key, json);
+      cloud.seq.set(key, seq);
+      const rec = section === "invoices" ? migrateInvoice(d.data) : d.data;
+      const list = state[section] || (state[section] = []);
+      const idx = list.findIndex(r => r.id === id);
+      if (idx >= 0) list[idx] = rec; else insertBySeq(section, rec, seq);
+      changed++;
+    });
+    if (changed) remoteChangesApplied();
+  }
+
+  function applyRemoteRoot(data) {
+    cloud.rootSchema = data.schema || 0;
+    let changed = 0;
+
+    if (data.settings && typeof data.settings === "object") {
+      const json = stableJson(data.settings);
+      if (json !== cloud.settingsJson) {
+        cloud.settingsJson = json;
+        const keptLocal = {};
+        LOCAL_ONLY_SETTINGS.forEach(k => { keptLocal[k] = state.settings[k]; });
+        state.settings = dropShippedSample({ ...defaultSettings(), ...data.settings, ...keptLocal });
+        changed++;
+      }
+    }
+
+    // An older copy of the app wrote the whole account in the old
+    // format before this account was moved over. Keep anything it
+    // added; the next save stores it the new way.
+    if (data.schema !== SYNC_SCHEMA && hasLegacyLists(data)) {
+      SYNC_SECTIONS.forEach(section => {
+        (data[section] || []).forEach(rec => {
+          if (!rec || !rec.id) return;
+          if ((state[section] || []).some(r => r.id === rec.id)) return;
+          insertBySeq(section, section === "invoices" ? migrateInvoice(rec) : rec, nextSeq());
+          changed++;
+        });
+      });
+      queueCloudPush();
+    }
+
+    if (changed) remoteChangesApplied();
+  }
+
+  function remoteChangesApplied() {
+    cloud.applyingRemote = true;
+    try {
+      saveLocal();
+      render();
+    } finally {
+      cloud.applyingRemote = false;
+    }
+    cloud.lastSyncedAt = Date.now();
+    // A contract sent from another device needs watching from this one too.
+    watchContracts();
+    toast("Updated from another device ☁️");
+    setCloudStatus("live");
   }
 
   // First snapshot after signing in on a device decides who wins.
@@ -6057,31 +6319,113 @@ const firebaseConfig = {
   }
 
   function queueCloudPush() {
-    if (cloud.status !== "live" || cloud.applyingRemote || !cloud.docRef) return;
+    if (cloud.status !== "live" || cloud.applyingRemote || !cloud.docRef || !cloud.ready) return;
     clearTimeout(cloud.pushTimer);
     cloud.pushTimer = setTimeout(() => pushCloud(), 900);
   }
 
+  // Writes only what changed since the cloud last agreed with us:
+  // new and edited records, records that were deleted, and settings.
   async function pushCloud(silent = false) {
-    if (!cloud.docRef || !cloud.fs) return;
-    const settings = { ...state.settings };
-    LOCAL_ONLY_SETTINGS.forEach(k => delete settings[k]);
-    const payload = {
-      settings, clients: state.clients, events: state.events, invoices: state.invoices,
-      contracts: state.contracts || [],
-      deviceId, updatedAt: cloud.fs.serverTimestamp(), schema: 2,
-    };
-    if (JSON.stringify(payload).length > CLOUD_DOC_LIMIT) {
-      setCloudStatus("error", "Your data is too large to sync — a big logo image is the usual cause.");
-      if (!silent) toast("Too large to sync — try a smaller logo image");
+    if (!cloud.docRef || !cloud.fs || !cloud.ready) return;
+    const { writeBatch, serverTimestamp, deleteField } = cloud.fs;
+    const rootRef = cloud.docRef;
+    const ops = [];
+    const present = new Set();
+    let tooBig = "";
+
+    SYNC_SECTIONS.forEach(section => {
+      (state[section] || []).forEach(rec => {
+        if (!rec || !rec.id) return;
+        const key = recKey(section, rec.id);
+        present.add(key);
+        const json = stableJson(rec);
+        if (cloud.known.get(key) === json) return;
+        if (json.length > CLOUD_DOC_LIMIT) { tooBig = section; return; }
+        let seq = cloud.seq.get(key);
+        if (seq == null) { seq = nextSeq(); cloud.seq.set(key, seq); }
+        ops.push({
+          kind: "set", key, json,
+          ref: recDocRef(section, rec.id),
+          data: { data: JSON.parse(JSON.stringify(rec)), seq, deviceId, updatedAt: serverTimestamp() },
+        });
+      });
+    });
+
+    [...cloud.known.keys()].forEach(key => {
+      if (present.has(key)) return;
+      const cut = key.indexOf("/");
+      ops.push({ kind: "delete", key, ref: recDocRef(key.slice(0, cut), key.slice(cut + 1)) });
+    });
+
+    const settings = cloudSettings();
+    const settingsJson = stableJson(settings);
+    let rootOp = null;
+    if (settingsJson !== cloud.settingsJson || cloud.rootSchema !== SYNC_SCHEMA || cloud.legacyCleanup) {
+      if (settingsJson.length > CLOUD_DOC_LIMIT) {
+        tooBig = "settings";
+      } else {
+        const data = {
+          settings: JSON.parse(JSON.stringify(settings)),
+          deviceId, updatedAt: serverTimestamp(), schema: SYNC_SCHEMA,
+        };
+        const fields = ["settings", "deviceId", "updatedAt", "schema"];
+        if (cloud.rootSchema !== SYNC_SCHEMA) { data.migratedAt = serverTimestamp(); fields.push("migratedAt"); }
+        if (cloud.legacyCleanup) SYNC_SECTIONS.forEach(s => { data[s] = deleteField(); fields.push(s); });
+        rootOp = { data, fields };
+      }
+    }
+
+    if (tooBig) {
+      setCloudStatus("error", tooBig === "settings"
+        ? "Your settings are too large to sync — a big logo image is the usual cause."
+        : "One record is too large to sync — a very large signature or pasted image is the usual cause.");
+      if (!silent) toast(tooBig === "settings" ? "Too large to sync — try a smaller logo image" : "One record is too large to sync");
+    }
+    if (!ops.length && !rootOp) {
+      if (!tooBig) setCloudStatus("live");
       return;
     }
+
+    // Record what the cloud will hold before the writes go out, so the
+    // echo of our own write isn't mistaken for news, and so a second
+    // save made meanwhile only sends what's new since this one.
+    const undo = [];
+    ops.forEach(op => {
+      undo.push([op.key, cloud.known.get(op.key)]);
+      if (op.kind === "set") cloud.known.set(op.key, op.json);
+      else { cloud.known.delete(op.key); }
+    });
+    const prevSettings = cloud.settingsJson, prevSchema = cloud.rootSchema, prevCleanup = cloud.legacyCleanup;
+    if (rootOp) { cloud.settingsJson = settingsJson; cloud.rootSchema = SYNC_SCHEMA; cloud.legacyCleanup = false; }
+
+    // Firestore allows 500 writes per batch.
+    const batches = [];
+    for (let i = 0; i < ops.length; i += 400) {
+      const b = writeBatch(cloud.db);
+      ops.slice(i, i + 400).forEach(op => op.kind === "set" ? b.set(op.ref, op.data) : b.delete(op.ref));
+      batches.push(b);
+    }
+    // Settings go last: the root is what marks an account as moved
+    // over, so it only says so once every record has been written.
+    if (rootOp) {
+      const b = writeBatch(cloud.db);
+      b.set(rootRef, rootOp.data, { mergeFields: rootOp.fields });
+      batches.push(b);
+    }
+
     try {
-      await cloud.fs.setDoc(cloud.docRef, payload);
+      for (const b of batches) await b.commit();
+      if (cloud.docRef !== rootRef) return;
+      ops.forEach(op => { if (op.kind === "delete") cloud.seq.delete(op.key); });
       cloud.lastSyncedAt = Date.now();
-      setCloudStatus("live");
+      if (!tooBig) setCloudStatus("live");
     } catch (e) {
       console.error("Cloud push failed", e);
+      if (cloud.docRef !== rootRef) return;
+      // Forget the optimistic bookkeeping so the next save retries.
+      undo.forEach(([key, prev]) => { if (prev === undefined) cloud.known.delete(key); else cloud.known.set(key, prev); });
+      if (rootOp) { cloud.settingsJson = prevSettings; cloud.rootSchema = prevSchema; cloud.legacyCleanup = prevCleanup; }
       // Firestore retries queued writes itself once back online.
       setCloudStatus(navigator.onLine ? "error" : "live",
         navigator.onLine ? (e?.message || "Could not save to the cloud") : "");

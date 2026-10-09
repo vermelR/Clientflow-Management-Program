@@ -1,12 +1,15 @@
 /* DJ ClientFlow service worker — makes the app installable and lets it
    launch with no connection. Bump CACHE when the app files change. */
 
-const CACHE = "djclientflow-v6";
+const CACHE = "djclientflow-v7";
 const SHELL = [
   "./",
   "index.html",
   "styles.css",
   "app.js",
+  "app-check.js",
+  "firebase-config.js",
+  "sw-register.js",
   "quote.html",
   "quote.js",
   "contract.html",

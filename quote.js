@@ -247,7 +247,9 @@
         import(`https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/firebase-firestore.js`),
       ]);
       fs = fsMod;
-      db = fsMod.getFirestore(appMod.initializeApp(config));
+      const app = appMod.initializeApp(config);
+      if (window.DJCF_startAppCheck) await window.DJCF_startAppCheck(app, FIREBASE_VERSION);
+      db = fsMod.getFirestore(app);
     } catch (e) {
       console.error("Could not load the viewer", e);
       note("Couldn't load your quote",

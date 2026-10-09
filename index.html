@@ -75,15 +75,8 @@
 
   <!-- Fill this in once to run the app for multiple users (see README) -->
   <script src="firebase-config.js"></script>
+  <script src="app-check.js"></script>
   <script src="app.js"></script>
-  <script>
-    // Installable app + offline launch. Registration is relative so it
-    // works from a project sub-path like /Clientflow-Management-Program/.
-    if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("sw.js").catch(err => console.warn("SW registration failed", err));
-      });
-    }
-  </script>
+  <script src="sw-register.js"></script>
 </body>
 </html>

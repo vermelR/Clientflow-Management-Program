@@ -34,6 +34,15 @@
       .toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   }
 
+  // The time a signature was given. The server's clock is the one
+  // that counts (the rules insist on it); the device's own clock is
+  // only a fallback for contracts signed before that was recorded.
+  function sigTime(sig) {
+    const t = sig && sig.signedAtServer;
+    if (t && typeof t.toDate === "function") return t.toDate().toISOString();
+    return (sig && sig.signedAt) || "";
+  }
+
   function fmtStamp(iso) {
     if (!iso) return "—";
     const d = new Date(iso);
@@ -67,7 +76,7 @@
         <div class="sig-rule"></div>
         <div class="sig-meta">
           <strong>${esc(label)}</strong>
-          ${sig ? `<span>${esc(sig.name || "")}</span><span>Signed ${esc(fmtStamp(sig.signedAt))}</span>`
+          ${sig ? `<span>${esc(sig.name || "")}</span><span>Signed ${esc(fmtStamp(sigTime(sig)))}</span>`
                 : `<span>Not signed yet</span>`}
         </div>
       </div>`;
@@ -116,7 +125,7 @@
   function signPanelHtml(data) {
     const ct = data.contract || {};
     if (data.clientSigned) {
-      const when = data.clientSignature && data.clientSignature.signedAt;
+      const when = data.clientSignature && sigTime(data.clientSignature);
       return `
         <div class="quote-card signed-card">
           <h2>✓ Signed${when ? ` on ${esc(fmtStamp(when))}` : ""}</h2>
@@ -305,6 +314,7 @@
       email,
       dataUrl: mode === "draw" ? drawn : "",
       signedAt: new Date().toISOString(),
+      signedAtServer: fs.serverTimestamp(),
     };
 
     btn.disabled = true;
@@ -317,7 +327,7 @@
       });
       // The listener re-renders with the signed copy; this is just in
       // case the write lands before the snapshot comes back.
-      render({ ...data, clientSigned: true, clientSignature: signature });
+      render({ ...data, clientSigned: true, clientSignature: { ...signature, signedAtServer: null } });
     } catch (e) {
       console.error("Signing failed", e);
       btn.disabled = false;
@@ -407,7 +417,9 @@
         import(`https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/firebase-firestore.js`),
       ]);
       fs = fsMod;
-      db = fsMod.getFirestore(appMod.initializeApp(config));
+      const app = appMod.initializeApp(config);
+      if (window.DJCF_startAppCheck) await window.DJCF_startAppCheck(app, FIREBASE_VERSION);
+      db = fsMod.getFirestore(app);
       ref = fsMod.doc(db, "contracts", shareId);
     } catch (e) {
       console.error("Could not load the viewer", e);
