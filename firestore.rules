@@ -1,7 +1,9 @@
 rules_version = '2';
 
-// DJ ClientFlow — every account can read and write ONLY its own document.
-// Publish these in Firebase Console → Firestore Database → Rules.
+// DJ ClientFlow — every account can read and write ONLY its own data.
+// Deployed with `firebase deploy --only firestore:rules` (the GitHub
+// workflow does this on every push), or paste them into Firebase
+// Console → Firestore Database → Rules and click Publish.
 // Without them your database is either wide open or fully closed.
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -20,29 +22,66 @@ service cloud.firestore {
 
     // The client's one-time signing write on a contract: the contract
     // must still be open, and the write may only add the signature.
+    // The signing time is stamped by Firestore itself (request.time),
+    // so a signer can't backdate or postdate it from their own device.
     function isClientSigning() {
+      let sig = request.resource.data.clientSignature;
       return resource.data.get('revoked', false) != true
              && resource.data.get('voided', false) != true
              && resource.data.get('clientSigned', false) != true
              && request.resource.data.clientSigned == true
              && request.resource.data.diff(resource.data).affectedKeys()
                   .hasOnly(['clientSigned', 'clientSignature', 'updatedAtMs'])
-             && request.resource.data.clientSignature.name is string
-             && request.resource.data.clientSignature.name.size() > 0
-             && request.resource.data.clientSignature.name.size() <= 120
-             && request.resource.data.clientSignature.get('dataUrl', '').size() <= 80000;
+             && sig is map
+             && sig.keys().hasOnly(['kind', 'name', 'email', 'dataUrl', 'signedAt', 'signedAtServer'])
+             && sig.kind in ['typed', 'drawn']
+             && sig.name is string
+             && sig.name.size() > 0
+             && sig.name.size() <= 120
+             && sig.get('email', '') is string
+             && sig.get('email', '').size() <= 254
+             && sig.get('dataUrl', '') is string
+             && sig.get('dataUrl', '').size() <= 80000
+             && sig.get('signedAt', '') is string
+             && sig.get('signedAt', '').size() <= 40
+             && sig.signedAtServer == request.time
+             && request.resource.data.get('updatedAtMs', 0) is int;
+    }
+
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    // The account document's old whole-account lists (schema 2).
+    function legacyLists() {
+      return ['clients', 'events', 'invoices', 'contracts'].toSet();
+    }
+
+    // Once an account has moved to one document per record (schema 3),
+    // the old format is closed: an out-of-date copy of the app can't
+    // write the whole account back into this document. The old lists
+    // may only be left alone or removed, and the schema can't go back.
+    function accountDocWriteOk() {
+      return resource == null
+             || resource.data.get('schema', 0) != 3
+             || (request.resource.data.get('schema', 0) == 3
+                 && request.resource.data.keys().toSet()
+                      .intersection(request.resource.data.diff(resource.data).affectedKeys())
+                      .intersection(legacyLists()).size() == 0);
     }
 
     // --- the account's own data --------------------------------------
 
     match /djclientflow/{userId} {
-      allow read, write: if request.auth != null
-                         && request.auth.uid == userId;
+      allow read, delete: if isOwner(userId);
+      allow create, update: if isOwner(userId) && accountDocWriteOk();
 
-      // Uploaded invoice PDFs belong to the same account.
-      match /files/{fileId} {
-        allow read, write: if request.auth != null
-                           && request.auth.uid == userId;
+      // One document per client, gig, invoice and contract; uploaded
+      // invoice PDFs; and the copy kept when an account is moved to
+      // the per-record format. All of it belongs to the account alone.
+      match /{section}/{docId} {
+        allow read, write: if isOwner(userId)
+                           && section in ['clients', 'events', 'invoices', 'contracts', 'files', 'backups'];
       }
     }
 

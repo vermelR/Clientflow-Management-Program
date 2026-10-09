@@ -24,6 +24,11 @@ window.DJCF_FIREBASE_CONFIG = {
   measurementId: "G-TJ0K83HDB2",
 };
 
+/* Optional: Firebase App Check. Paste a reCAPTCHA Enterprise site key
+   here (README → "App Check") and only this site can use your
+   Firebase project. Leave it empty to keep App Check off. */
+window.DJCF_APPCHECK_SITE_KEY = "";
+
 /* Optional branding for the login screen of your hosted app. */
 window.DJCF_APP_INFO = {
   productName: "DJ ClientFlow",
