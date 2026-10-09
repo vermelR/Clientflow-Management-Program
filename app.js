@@ -3384,34 +3384,69 @@ const firebaseConfig = {
     document.getElementById("updatesDot")?.classList.add("hidden");
   }
 
+  function updateDateLabel(u) {
+    if (!u.date) return "";
+    const pretty = fmtDate(u.date);
+    return pretty === "—" ? u.date : pretty;
+  }
+
+  function updateEntryHtml(u) {
+    return `
+      <li class="update-entry">
+        <div class="update-head">
+          ${u.version ? `<span class="update-version">${escapeHtml(u.version)}</span>` : ""}
+          ${u.title ? `<span class="update-title">${escapeHtml(u.title)}</span>` : ""}
+          ${u.date ? `<span class="update-date">${escapeHtml(updateDateLabel(u))}</span>` : ""}
+        </div>
+        ${Array.isArray(u.notes) && u.notes.length
+          ? `<ul class="update-notes">${u.notes.map(n => `<li>${escapeHtml(typeof n === "string" ? n : n.text || "")}</li>`).join("")}</ul>`
+          : ""}
+      </li>`;
+  }
+
+  /* The card stays one line tall however many releases pile up — the
+     list itself opens in a dialog and scrolls inside it, so Settings
+     doesn't grow every time something ships. */
   async function renderUpdatesCard() {
     const card = document.getElementById("updatesCard");
     if (!card) return;
     const list = await fetchUpdates();
     if (!document.getElementById("updatesCard")) return;   // navigated away
 
+    const newest = list[0];
+    const unread = !!(newest && localStorage.getItem(SEEN_UPDATE_KEY) !== updateKey(newest));
+
     card.innerHTML = `
-      <div class="card-title">🆕 What's new</div>
+      <div class="card-title">🆕 What's new${unread ? ` <span class="new-chip">New</span>` : ""}</div>
       ${list.length ? `
-        <p class="settings-note">Everything that's changed in ${escapeHtml(appInfo().productName)}, newest first.</p>
-        <ol class="update-list">
-          ${list.map(u => `
-            <li class="update-entry">
-              <div class="update-head">
-                ${u.version ? `<span class="update-version">${escapeHtml(u.version)}</span>` : ""}
-                ${u.title ? `<span class="update-title">${escapeHtml(u.title)}</span>` : ""}
-                ${u.date ? `<span class="update-date">${escapeHtml(fmtDate(u.date) === "—" ? u.date : fmtDate(u.date))}</span>` : ""}
-              </div>
-              ${Array.isArray(u.notes) && u.notes.length
-                ? `<ul class="update-notes">${u.notes.map(n => `<li>${escapeHtml(typeof n === "string" ? n : n.text || "")}</li>`).join("")}</ul>`
-                : ""}
-            </li>`).join("")}
-        </ol>`
+        <p class="settings-note">
+          Latest: <strong>${escapeHtml(newest.title || "Update")}</strong>${newest.date ? ` · ${escapeHtml(updateDateLabel(newest))}` : ""}
+        </p>
+        <button class="btn" id="openUpdates">📋 Click here for the update list (${list.length})</button>`
       : `<p class="settings-note" style="margin:0">
            No updates posted yet. New features and fixes will show up here.
          </p>`}`;
 
+    $("#openUpdates", card)?.addEventListener("click", openUpdatesModal);
+  }
+
+  function openUpdatesModal() {
+    const list = updatesCache || [];
+    openModal(modalShell("What's new", `
+      <p class="settings-note">Everything that's changed in ${escapeHtml(appInfo().productName)}, newest first.</p>
+      <div class="updates-scroll">
+        <ol class="update-list">${list.map(updateEntryHtml).join("")}</ol>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="updatesDone">Done</button>
+      </div>`), true);
+
+    // Opening the list is what counts as having read it. The card
+    // behind the dialog is refreshed now, so the "New" chip is gone
+    // whichever way the dialog is closed.
     markUpdatesSeen();
+    if (currentView === "settings") renderUpdatesCard();
+    $("#updatesDone").addEventListener("click", closeModal);
   }
 
   /* ================= CALENDLY (send the client a booking link) =========
