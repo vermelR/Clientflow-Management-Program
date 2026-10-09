@@ -4,7 +4,7 @@
   "description": "Dev tooling only: the app itself has no dependencies and no build step.",
   "type": "module",
   "scripts": {
-    "test": "firebase emulators:exec --only firestore --project djcf-rules-test \"node --test tests/\"",
+    "test": "firebase emulators:exec --only firestore --project djcf-rules-test \"node --test tests/firestore.rules.test.mjs\"",
     "deploy": "firebase deploy --only hosting,firestore:rules"
   },
   "devDependencies": {
