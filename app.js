@@ -2099,13 +2099,70 @@
     });
   }
 
-  /* ---------- Gmail integration (Google Identity Services) ---------- */
+  /* ---------- Gmail integration (Google Identity Services) ----------
+     Google's access tokens last an hour and the browser never gets a
+     refresh token, so the only way to avoid asking again every hour is
+     a silent re-grant through Google Identity Services. That needs the
+     project's OAuth client id, which the operator bakes into
+     firebase-config.js once for everybody. Without it the app falls
+     back to a popup, which is why it used to ask so often.
+
+     The token itself is kept per account, in localStorage so it
+     survives closing the tab, and is dropped the moment the account
+     changes — one DJ must never inherit another's mailbox. */
+
+  function googleTokenKey() { return activeUid ? `${GMAIL_TOKEN_KEY}.${activeUid}` : GMAIL_TOKEN_KEY; }
+  function googleGrantKey() { return `${GMAIL_TOKEN_KEY}.granted${activeUid ? "." + activeUid : ""}`; }
 
   let gmailToken = null;
-  try { gmailToken = JSON.parse(sessionStorage.getItem(GMAIL_TOKEN_KEY)); } catch { /* ignore */ }
+
+  function readStoredGoogleToken() {
+    try { return JSON.parse(localStorage.getItem(googleTokenKey())); } catch { return null; }
+  }
+
+  function loadGoogleToken() {
+    const stored = readStoredGoogleToken();
+    // A token belongs to the account it was granted for, and to nobody else.
+    gmailToken = stored && stored.uid === (cloud.user ? cloud.user.uid : null) ? stored : null;
+    return gmailToken;
+  }
+
+  function storeGoogleToken(tok) {
+    gmailToken = tok;
+    try { localStorage.setItem(googleTokenKey(), JSON.stringify(tok)); } catch { /* quota */ }
+    rememberGrant(tok.scopes, tok.email);
+  }
+
+  // What Google has already consented to for this account. Kept past
+  // the token's own hour, because it tells us a silent renewal will
+  // work instead of a popup.
+  function rememberedGrant() {
+    try { return JSON.parse(localStorage.getItem(googleGrantKey())) || { scopes: [], email: "" }; }
+    catch { return { scopes: [], email: "" }; }
+  }
+
+  function rememberGrant(scopes, email) {
+    const prev = rememberedGrant();
+    const merged = [...new Set([...(prev.scopes || []), ...(scopes || [])])];
+    try {
+      localStorage.setItem(googleGrantKey(), JSON.stringify({ scopes: merged, email: email || prev.email || "" }));
+    } catch { /* quota */ }
+  }
+
+  function forgetGrant() {
+    try { localStorage.removeItem(googleGrantKey()); } catch { /* ignore */ }
+  }
 
   function gmailReady() {
-    return gmailToken && Date.now() < gmailToken.expiresAt - 60000;
+    return !!gmailToken && Date.now() < gmailToken.expiresAt - 60000;
+  }
+
+  // The client id the silent renewal needs: baked in for the hosted
+  // app, or pasted by someone running their own copy.
+  function googleClientId() {
+    const hosted = (window.DJCF_GOOGLE_CLIENT_ID || "").trim();
+    if (hosted && !hosted.startsWith("YOUR_")) return hosted;
+    return (state.settings.googleClientId || "").trim();
   }
 
   let gsiPromise = null;
@@ -2140,15 +2197,68 @@
     return gmailReady() && grantedScopes().includes(scope);
   }
 
+  // A new access token without showing anything, for a permission
+  // Google has already granted. Returns false when it can't be done
+  // quietly — no client id configured, or consent genuinely needed.
+  async function silentGoogleToken(scopes) {
+    const clientId = googleClientId();
+    const remembered = rememberedGrant();
+    const alreadyGranted = scopes.every(sc => (remembered.scopes || []).includes(sc));
+    if (!clientId || !alreadyGranted) return false;
+
+    try { await loadGsi(); } catch { return false; }
+
+    const resp = await new Promise(resolve => {
+      let done = false;
+      const finish = v => { if (!done) { done = true; resolve(v); } };
+      // GIS doesn't always call back when it decides it can't be silent.
+      const timer = setTimeout(() => finish(null), 12000);
+      try {
+        google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: scopes.join(" "),
+          prompt: "",                                     // no UI if consent already exists
+          hint: remembered.email || (cloud.user && cloud.user.email) || "",
+          callback: r => { clearTimeout(timer); finish(r && r.access_token ? r : null); },
+          error_callback: () => { clearTimeout(timer); finish(null); },
+        }).requestAccessToken();
+      } catch { clearTimeout(timer); finish(null); }
+    });
+    if (!resp) return false;
+
+    const granted = await grantedScopesFor(resp.access_token, scopes);
+    if (scopes.some(sc => !granted.includes(sc))) return false;
+
+    storeGoogleToken({
+      token: resp.access_token,
+      expiresAt: Date.now() + ((Number(resp.expires_in) || 3600) - 100) * 1000,
+      via: "silent",
+      scopes: granted,
+      email: remembered.email || (cloud.user && cloud.user.email) || "",
+      uid: cloud.user ? cloud.user.uid : null,
+    });
+    return true;
+  }
+
   // Asks for a scope only if it isn't already granted, and always asks
   // for the union so enabling a second feature can't revoke the first.
-  async function ensureGoogleScope(scope) {
+  // interactive:false means "renew quietly or not at all" — a popup
+  // that nobody clicked for gets blocked by the browser anyway.
+  async function ensureGoogleScope(scope, { interactive = true } = {}) {
     if (hasGoogleScope(scope)) return;
+
+    const wanted = [...new Set([...grantedScopes(), ...(rememberedGrant().scopes || []), scope])];
+    if (await silentGoogleToken(wanted)) return;
+
+    if (!interactive) {
+      const err = new Error("Google needs you to reconnect — it only takes a click.");
+      err.needsClick = true;
+      throw err;
+    }
     if (!canUseAccountForGmail()) {
       if (scope === GMAIL_SCOPE) return connectGmail();
       throw new Error("Sign in with your Google account to use this.");
     }
-    const wanted = [...new Set([...grantedScopes(), scope])];
     return connectGmailViaAccount(wanted);
   }
 
@@ -2194,15 +2304,15 @@
       throw new Error(`Google didn't grant permission to ${what}. Try again and leave that checkbox ticked — if it never appears, the scope still needs adding to your OAuth consent screen.`);
     }
 
-    gmailToken = {
+    storeGoogleToken({
       token: cred.accessToken,
-      // Google's tokens last an hour; refresh a little early.
+      // Google's tokens last an hour; renew a little early.
       expiresAt: Date.now() + 3500 * 1000,
       via: "account",
       scopes: granted,
       email: result.user?.email || user.email || "",
-    };
-    try { sessionStorage.setItem(GMAIL_TOKEN_KEY, JSON.stringify(gmailToken)); } catch { /* ignore */ }
+      uid: user.uid,
+    });
   }
 
   // Google will tell us exactly which scopes a token carries.
@@ -2235,12 +2345,13 @@
         scope: "https://www.googleapis.com/auth/gmail.send",
         callback: resp => {
           if (resp.error) { reject(new Error("Google sign-in failed: " + resp.error)); return; }
-          gmailToken = {
+          storeGoogleToken({
             token: resp.access_token,
-            expiresAt: Date.now() + (Number(resp.expires_in) || 3600) * 1000,
+            expiresAt: Date.now() + ((Number(resp.expires_in) || 3600) - 100) * 1000,
             scopes: [GMAIL_SCOPE],
-          };
-          try { sessionStorage.setItem(GMAIL_TOKEN_KEY, JSON.stringify(gmailToken)); } catch { /* ignore */ }
+            email: (cloud.user && cloud.user.email) || "",
+            uid: cloud.user ? cloud.user.uid : null,
+          });
           resolve();
         },
         error_callback: err => reject(new Error("Google sign-in was closed or blocked" + (err?.type ? ` (${err.type})` : ""))),
@@ -2249,9 +2360,13 @@
     });
   }
 
-  function disconnectGmail() {
+  // forget: true also drops the record of what Google consented to, so
+  // the next attempt asks properly instead of trying to renew quietly.
+  function disconnectGmail({ forget = false } = {}) {
     gmailToken = null;
-    sessionStorage.removeItem(GMAIL_TOKEN_KEY);
+    try { localStorage.removeItem(googleTokenKey()); } catch { /* ignore */ }
+    try { sessionStorage.removeItem(GMAIL_TOKEN_KEY); } catch { /* ignore */ }   // from older versions
+    if (forget) forgetGrant();
   }
 
   const b64utf8 = str => btoa(unescape(encodeURIComponent(str)));
@@ -2395,7 +2510,7 @@
         return err;
       }
       if (/insufficient|scope|permission/i.test(detail + reason)) {
-        disconnectGmail();       // the grant is genuinely missing, so start over
+        disconnectGmail({ forget: true });   // the grant is genuinely missing, so start over
         const err = new Error(`Google didn't grant permission to use ${api}. Reconnect and make sure the permission checkbox stays ticked.`);
         err.needsConsent = true;
         return err;
@@ -2535,7 +2650,10 @@
           <span><span class="legend-dot" style="background:var(--muted)"></span>Cancelled</span>
           ${showGoogle ? `<span><span class="legend-dot" style="background:#2f6fd0"></span>From Google Calendar${gcal.loading ? " (loading…)" : ""}</span>` : ""}
         </div>
-        ${showGoogle && gcal.error ? `<div class="cal-error">⚠️ ${escapeHtml(gcal.error)}</div>` : ""}
+        ${showGoogle && gcal.error ? `<div class="cal-error">
+          <span>⚠️ ${escapeHtml(gcal.error)}</span>
+          ${gcal.needsClick ? `<button class="btn btn-sm" id="gcalReconnect">Reconnect Google Calendar</button>` : ""}
+        </div>` : ""}
         ${!showGoogle && calendlyLink() ? `<div class="cal-hint">
           Want calls your clients book to appear here automatically?
           <button class="linkish" id="calEnableGoogle">Turn on Google Calendar in Settings →</button>
@@ -2547,6 +2665,11 @@
     $("#calToday", root).addEventListener("click", () => { calCursor = new Date(); renderCalendar(root); });
     $("#calAddEvent", root).addEventListener("click", () => openEventForm());
     $("#calEnableGoogle", root)?.addEventListener("click", () => go("settings"));
+    // The one place a Google popup is allowed: a button someone pressed.
+    $("#gcalReconnect", root)?.addEventListener("click", () => {
+      gcal = { ...gcal, monthKey: null };
+      loadGoogleMonth(y, m, () => { if (currentView === "calendar") renderCalendar(root); }, { interactive: true });
+    });
     $$("[data-gcal]", root).forEach(el => el.addEventListener("click", () => {
       const [iso, idx] = el.dataset.gcal.split("|");
       openGoogleEventDetail(googleByDate[iso]?.[Number(idx)]);
@@ -2727,12 +2850,36 @@
           </p>
           <div style="display:flex;gap:10px;align-items:center;margin-top:4px;flex-wrap:wrap">
             <button class="btn btn-primary" id="gmailConnect">${gmailReady() ? "Reconnect" : "Enable Gmail sending"}</button>
-            ${gmailReady() ? `<button class="btn" id="gmailDisconnect">Turn off</button>` : ""}
+            ${gmailReady() || (rememberedGrant().scopes || []).length ? `<button class="btn" id="gmailDisconnect">Turn off</button>` : ""}
             <span class="settings-note" id="gmailStatus" style="margin:0">
               ${gmailReady()
                 ? `✅ Ready${gmailToken?.email ? " — sending as " + escapeHtml(gmailToken.email) : ""}`
-                : "Not enabled yet — you can also just hit Send on an invoice"}
+                : (rememberedGrant().scopes || []).includes(GMAIL_SCOPE)
+                  ? "✅ Permission given — renewing in the background when you send"
+                  : "Not enabled yet — you can also just hit Send on an invoice"}
             </span>
+          </div>
+
+          <div class="sub-setting">
+            <div class="card-title" style="margin-bottom:8px">Stop Google asking every hour</div>
+            <p class="settings-note">
+              Google's permission lasts one hour and browsers aren't allowed to extend it on their own.
+              With your project's OAuth client id below, ClientFlow renews it quietly in the background
+              and you stop seeing the Google window. ${googleClientId()
+                ? `<strong>Set up ✅</strong> — nothing more to do.`
+                : `Find it in <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console → Credentials</a>,
+                   under <em>Web client (auto created by Google Service)</em>, and add this site under
+                   Authorised JavaScript origins while you're there.`}
+            </p>
+            ${googleClientId() ? "" : `
+              <div class="form-grid">
+                <div class="field full"><label>OAuth client id</label>
+                  <input id="googleClientId" value="${escapeHtml(s.googleClientId || "")}" placeholder="1234567890-abc123.apps.googleusercontent.com">
+                </div>
+              </div>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
+                <button class="btn" id="saveClientId">Save client id</button>
+              </div>`}
           </div>`
         : `
           <p class="settings-note">
@@ -2919,9 +3066,21 @@
       }
     });
     $("#gmailDisconnect", root)?.addEventListener("click", () => {
-      disconnectGmail();
+      disconnectGmail({ forget: true });
       renderSettings(root);
       toast("Gmail disconnected");
+    });
+    $("#saveClientId", root)?.addEventListener("click", () => {
+      commitSettingsRef?.();
+      const raw = $("#googleClientId", root).value.trim();
+      if (raw && !/\.apps\.googleusercontent\.com$/.test(raw)) {
+        toast("That should end in .apps.googleusercontent.com");
+        return;
+      }
+      state.settings.googleClientId = raw;
+      save();
+      renderSettings(root);
+      toast(raw ? "Saved — Google should stop asking now" : "Client id cleared");
     });
 
     $("#exportData", root).addEventListener("click", async e => {
@@ -3611,8 +3770,8 @@ const firebaseConfig = {
     return !!state.settings.showGoogleCalendar && canUseAccountForGmail();
   }
 
-  async function fetchGoogleEvents(y, m) {
-    await ensureGoogleScope(CALENDAR_SCOPE);
+  async function fetchGoogleEvents(y, m, { interactive = false } = {}) {
+    await ensureGoogleScope(CALENDAR_SCOPE, { interactive });
     const timeMin = new Date(y, m, 1).toISOString();
     const timeMax = new Date(y, m + 1, 1).toISOString();
     const params = new URLSearchParams({
@@ -3627,7 +3786,7 @@ const firebaseConfig = {
       // Token aged out mid-session: renew silently and try once more.
       const first = await googleApiError(res, "Google Calendar");
       if (first.expired) {
-        await ensureGoogleScope(CALENDAR_SCOPE);
+        await ensureGoogleScope(CALENDAR_SCOPE, { interactive });
         res = await run();
       }
     }
@@ -3656,17 +3815,23 @@ const firebaseConfig = {
       .filter(e => e.date);
   }
 
-  async function loadGoogleMonth(y, m, rerender) {
+  async function loadGoogleMonth(y, m, rerender, { interactive = false } = {}) {
     const key = `${y}-${m}`;
     if (gcal.loading) return;
-    gcal = { ...gcal, monthKey: key, loading: true, error: "" };
+    gcal = { ...gcal, monthKey: key, loading: true, error: "", needsClick: false };
     rerender();
     try {
-      const events = await fetchGoogleEvents(y, m);
-      gcal = { monthKey: key, events, loading: false, error: "" };
+      const events = await fetchGoogleEvents(y, m, { interactive });
+      gcal = { monthKey: key, events, loading: false, error: "", needsClick: false };
     } catch (e) {
       console.warn("Google Calendar load failed", e);
-      gcal = { monthKey: key, events: [], loading: false, error: e.message || "Could not load Google Calendar" };
+      gcal = {
+        monthKey: key, events: [], loading: false,
+        error: e.message || "Could not load Google Calendar",
+        // A popup nobody clicked for is blocked by the browser, so ask
+        // for the click instead of firing one on page load.
+        needsClick: !!e.needsClick,
+      };
     }
     rerender();
   }
@@ -5677,13 +5842,16 @@ const firebaseConfig = {
   }
 
   function onSignedIn(user) {
+    const switched = !!(gmailToken && gmailToken.uid && gmailToken.uid !== user.uid);
     cloud.user = user;
+    if (switched) disconnectGmail();
     sharePublished.clear();
     const previousKey = storageKey();
     activeUid = user.uid;
     // Load (or start) this account's own local cache before syncing.
     state = load();
     saveLocal();
+    loadGoogleToken();     // this account's Gmail permission, not the last one's
     guestDataPendingImport = localStorage.getItem(GUEST_KEY) === "1" ? previousKey : null;
     localStorage.removeItem(GUEST_KEY);
     showApp();
@@ -5693,6 +5861,7 @@ const firebaseConfig = {
 
   function onSignedOut() {
     cloud.user = null;
+    disconnectGmail();        // never leave one account's mailbox open to the next
     stopSync();
     activeUid = null;
     sharePublished.clear();   // the next account must not inherit this one's "already published"
@@ -6094,6 +6263,10 @@ const firebaseConfig = {
   /* ---------------- Init ---------------- */
 
   saveLocal(); // syncs sidebar business name without a cloud round-trip
+  // Pick up a Google token saved on a previous visit. Runs here rather
+  // than beside its own declaration: it reads `cloud`, which is a const
+  // further down the file and would still be in its dead zone.
+  loadGoogleToken();
   render();
   refreshCloudUi();
   initCloud();

@@ -1198,3 +1198,6 @@ tr.row-hotel td.hotel-label { font-weight: 700; color: #e85d26; font-size: 13px;
   padding: 4px 16px; background: var(--bg);
 }
 .updates-scroll .update-entry { padding: 16px 0; }
+
+.cal-error { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cal-error .btn { flex-shrink: 0; }

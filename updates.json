@@ -1,6 +1,17 @@
 {
   "updates": [
     {
+      "title": "Google stops asking every hour",
+      "date": "2026-10-11",
+      "notes": [
+        "Google permissions last exactly one hour and a browser app never gets a refresh token, so Gmail sending and the calendar kept popping a sign-in window. ClientFlow now renews that permission quietly in the background.",
+        "Your Google permission is also remembered per account and survives closing the tab — it used to live only as long as the tab did, so reopening the app meant signing in again.",
+        "The Calendar page no longer fires a sign-in window on load. Browsers block popups nobody clicked for, which looked like the calendar was broken; it now shows a Reconnect button instead.",
+        "Signing out, or switching to another account in the same browser, now clears the Google permission with it.",
+        "Quiet renewal needs the project's OAuth client id in firebase-config.js — see the README. Without it everything still works, Google just asks again each hour."
+      ]
+    },
+    {
       "title": "Running order for multi-day bookings",
       "date": "2026-10-08",
       "notes": [

@@ -24,6 +24,21 @@ window.DJCF_FIREBASE_CONFIG = {
   measurementId: "G-TJ0K83HDB2",
 };
 
+/* Your project's OAuth web client id. Fill this in and Gmail sending
+   and the calendar stop asking permission every hour: the app renews
+   the hour-long Google token quietly in the background instead of
+   popping a window. Leave it as-is and everything still works — Google
+   just asks again each time the token runs out.
+
+   Find it in Google Cloud Console → APIs & Services → Credentials →
+   OAuth 2.0 Client IDs → "Web client (auto created by Google Service)".
+   Copy the Client ID; it ends in .apps.googleusercontent.com. While
+   you're there, add your site's address under Authorised JavaScript
+   origins, or the browser will refuse the silent renewal.
+
+   Like the keys above, this is not a secret. */
+window.DJCF_GOOGLE_CLIENT_ID = "YOUR_OAUTH_CLIENT_ID.apps.googleusercontent.com";
+
 /* Optional branding for the login screen of your hosted app. */
 window.DJCF_APP_INFO = {
   productName: "DJ ClientFlow",

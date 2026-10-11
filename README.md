@@ -64,6 +64,22 @@ Now every invoice has a **"Send via Gmail"** button that emails a beautifully fo
 
 > Note: Gmail sign-in requires the site to be served over http(s) — it works on your GitHub Pages URL, not when opening `index.html` directly from disk. The "Email (mail app)" button works everywhere as a fallback.
 
+### Stop Google asking every hour
+
+Google's access tokens last exactly one hour, and a browser-only app is never given a refresh token — so once the hour is up, the only way back in is to ask again. That's why Gmail and the calendar used to pop a window so often.
+
+The fix is one line in `firebase-config.js`:
+
+```js
+window.DJCF_GOOGLE_CLIENT_ID = "1234567890-abc123.apps.googleusercontent.com";
+```
+
+Find it in [Google Cloud Console → APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials), under **OAuth 2.0 Client IDs → Web client (auto created by Google Service)**. While you're on that screen, add your site's address (`https://vermelr.github.io`, plus any custom domain) under **Authorised JavaScript origins** — without it the browser blocks the silent renewal.
+
+With that set, ClientFlow renews the hour-long token in the background through Google Identity Services and nobody sees a window after the first time. Leave it unset and everything still works; Google just asks again whenever the hour runs out.
+
+Two related things the app now does regardless: the token is stored per account and survives closing the tab (it used to live only as long as the tab did), and the Calendar page never fires a sign-in popup on load — browsers block popups nobody clicked for, which looked like the calendar being broken. It shows a **Reconnect Google Calendar** button instead.
+
 ## Seeing booked calls on the Calendar page
 
 Once a client books, the time they picked shows up on the Calendar page — but only with this chain connected, because the app has no server to receive Calendly's webhooks:
