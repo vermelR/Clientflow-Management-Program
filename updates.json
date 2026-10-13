@@ -6,7 +6,8 @@
       "notes": [
         "A one-time cleanup, added when ClientFlow stopped shipping a contract of its own, was removing any template that matched that old example word for word — on every load, not just once.",
         "Anyone who pasted in the sample wording lost their template each time they reopened the app. The cleanup is gone; your template is yours and stays put.",
-        "If yours vanished, paste it back in once under Settings → My contract. It will stick this time."
+        "If yours vanished, paste it back in once under Settings → My contract. It will stick this time.",
+        "A gig's fee is no longer typed twice: once it has been invoiced, the gig adds its invoices up for you and the field becomes a figure rather than a box. Before that it asks for a quoted fee as a placeholder, which seeds the first invoice and the contract."
       ]
     },
     {

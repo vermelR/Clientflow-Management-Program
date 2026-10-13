@@ -1289,3 +1289,10 @@ tr.row-hotel td.hotel-label { font-weight: 700; color: #e85d26; font-size: 13px;
   .item-row > :first-child { grid-column: 1 / -1; }
   .detail-row { grid-template-columns: minmax(0, 1fr) 56px 30px; }
 }
+
+/* A figure the app works out rather than asks for. */
+.derived-value {
+  padding: 8px 11px; font-size: 14px; font-weight: 700;
+  border: 1px dashed var(--border); border-radius: 8px;
+  background: var(--bg); color: var(--text);
+}

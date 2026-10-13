@@ -385,13 +385,22 @@
     return gigExpenses(e).reduce((s, x) => s + (Number(x.amount) || 0), 0);
   }
 
-  // What the gig is worth: its invoices if there are any, otherwise the
-  // fee written on the booking.
+  // What the gig is worth. Once it has been invoiced the invoices are
+  // the answer — the quoted fee was only ever a placeholder for this.
   function gigRevenue(e) {
-    const invs = state.invoices.filter(i => i.eventId === e.id);
-    if (invs.length) return invs.reduce((s, i) => s + invTotal(i), 0);
+    if (!e) return 0;
+    if (gigIsInvoiced(e)) return gigInvoicedTotal(e);
     return Number(e.fee) || 0;
   }
+
+  // Invoices for a gig, and what they add up to.
+  function gigInvoices(e) {
+    return e ? state.invoices.filter(i => i.eventId === e.id) : [];
+  }
+  function gigInvoicedTotal(e) {
+    return gigInvoices(e).reduce((s, i) => s + invTotal(i), 0);
+  }
+  function gigIsInvoiced(e) { return gigInvoices(e).length > 0; }
 
   function gigProfit(e) {
     return Math.round((gigRevenue(e) - expenseTotal(e)) * 100) / 100;
@@ -967,7 +976,7 @@
                 <td><strong>${escapeHtml(e.title)}</strong><span class="sub">${escapeHtml(e.type || "")}</span></td>
                 <td>${escapeHtml(clientName(e.clientId))}</td>
                 <td>${escapeHtml(e.venue || "—")}</td>
-                <td class="right nowrap">${e.fee ? money(e.fee) : "—"}</td>
+                <td class="right nowrap">${gigRevenue(e) ? money(gigRevenue(e)) : "—"}</td>
                 <td>${badge(e.status)}</td>
                 <td class="right nowrap"><button class="btn btn-sm" data-edit-event="${e.id}">Edit</button></td>
               </tr>`).join("")}
@@ -1059,7 +1068,17 @@
           <div class="field"><label>Venue</label><input name="venue" value="${escapeHtml(val("venue"))}" placeholder="The Grand Ballroom"></div>
           <div class="field"><label>Venue address</label><input name="address" value="${escapeHtml(ev?.address || "")}" placeholder="123 Main St"></div>
           <div class="field"><label>Guest count</label><input name="guestCount" type="number" min="0" value="${escapeHtml(ev?.guestCount || "")}"></div>
-          <div class="field"><label>Performance fee</label><input name="fee" type="number" min="0" step="0.01" value="${escapeHtml(ev?.fee || "")}" placeholder="0.00"></div>
+          <div class="field">
+            <label>${ev && gigIsInvoiced(ev) ? "Invoiced" : "Quoted fee"}
+              <span class="field-hint">${ev && gigIsInvoiced(ev)
+                ? `— added up from ${gigInvoices(ev).length} invoice${gigInvoices(ev).length === 1 ? "" : "s"}`
+                : "— a placeholder until you invoice this gig"}</span>
+            </label>
+            ${ev && gigIsInvoiced(ev)
+              ? `<div class="derived-value">${money(gigInvoicedTotal(ev))}</div>
+                 <input type="hidden" name="fee" value="${escapeHtml(ev.fee ?? "")}">`
+              : `<input name="fee" type="number" min="0" step="0.01" value="${escapeHtml(ev?.fee || "")}" placeholder="0.00">`}
+          </div>
           <div class="field full"><label>Client needs &amp; requests</label><textarea name="needs" placeholder="Equipment, special songs, first dance, MC duties, uplighting…">${escapeHtml(val("needs"))}</textarea></div>
           <div class="field full"><label>Internal notes</label><textarea name="notes" placeholder="Load-in details, contact on site, parking…">${escapeHtml(val("notes"))}</textarea></div>
         </div>
@@ -1119,9 +1138,10 @@
       const el = $("#expenseRunning");
       if (!el) return;
       const spent = expenseSum();
-      const fee = Number(form.fee.value) || 0;
+      const earns = ev && gigIsInvoiced(ev) ? gigInvoicedTotal(ev) : (Number(form.fee.value) || 0);
+      const label = ev && gigIsInvoiced(ev) ? "invoiced" : "fee";
       el.innerHTML = spent
-        ? `Costs <strong>${money(spent)}</strong>${fee ? ` · leaves <strong class="${fee - spent >= 0 ? "pos" : "warn"}">${money(fee - spent)}</strong> of the ${money(fee)} fee` : ""}`
+        ? `Costs <strong>${money(spent)}</strong>${earns ? ` · leaves <strong class="${earns - spent >= 0 ? "pos" : "warn"}">${money(earns - spent)}</strong> of the ${money(earns)} ${label}` : ""}`
         : "";
     }
 
@@ -1259,8 +1279,9 @@
         <div class="detail-item"><div class="lbl">Client</div><div class="val">${c ? `<a href="#" data-open-client="${c.id}">${escapeHtml(c.name)}</a>` : "—"}</div></div>
         <div class="detail-item"><div class="lbl">Venue</div><div class="val">${escapeHtml(e.venue || "—")}${e.address ? `<br><span style="color:var(--muted);font-size:12.5px">${escapeHtml(e.address)}</span>` : ""}</div></div>
         <div class="detail-item"><div class="lbl">Guests</div><div class="val">${escapeHtml(e.guestCount || "—")}</div></div>
-        <div class="detail-item"><div class="lbl">Fee</div>
-          <div class="val"><strong>${e.fee ? money(e.fee) : "—"}</strong>${gigExpenses(e).length
+        <div class="detail-item"><div class="lbl">${gigIsInvoiced(e) ? "Invoiced" : "Quoted fee"}</div>
+          <div class="val"><strong>${gigRevenue(e) ? money(gigRevenue(e)) : "—"}</strong>${gigIsInvoiced(e)
+            ? `<span class="sub">across ${gigInvoices(e).length} invoice${gigInvoices(e).length === 1 ? "" : "s"}</span>` : ""}${gigExpenses(e).length
             ? `<span class="sub">${money(gigProfit(e))} after costs</span>` : ""}</div>
         </div>
       </div>
@@ -1434,7 +1455,9 @@
         const ev = eventById(preset.eventId);
         if (ev) groups = [{
           name: ev.title,
-          items: [{ name: `DJ services — ${fmtDate(ev.date)}`, qty: 1, price: ev.fee || "", comp: false, details: [] }],
+          // Only seed the price when nothing has been invoiced yet —
+          // otherwise a second invoice would repeat the first.
+          items: [{ name: `DJ services — ${fmtDate(ev.date)}`, qty: 1, price: gigIsInvoiced(ev) ? "" : (ev.fee || ""), comp: false, details: [] }],
         }];
       }
       draft = { groups, discounts: [], hotelEnabled: true, hotelText: s.hotelText };
@@ -1724,7 +1747,10 @@
     const clientId = inv?.clientId || preset.clientId || "";
     const eventId = inv?.eventId || preset.eventId || "";
     // Coming from a gig, its fee is the most likely total.
-    const presetTotal = inv?.manualTotal ?? (preset.eventId ? eventById(preset.eventId)?.fee : "") ?? "";
+    const presetGig = preset.eventId ? eventById(preset.eventId) : null;
+    const presetTotal = inv?.manualTotal
+      ?? (presetGig && !gigIsInvoiced(presetGig) ? presetGig.fee : "")
+      ?? "";
 
     openModal(modalShell(inv ? `Edit ${inv.number}` : "Upload an existing invoice", `
       <form id="uploadInvForm">
