@@ -144,33 +144,6 @@
     return { settings: defaultSettings(), clients: [], events: [], invoices: [], contracts: [], packages: [] };
   }
 
-  /* An earlier build shipped a worked example as the starting contract.
-     It shouldn't be anyone's default — the agreement a DJ sends has to
-     be their own — so any account still carrying it untouched has it
-     cleared out on the way in, and is asked to bring their own instead.
-     The match is exact, so a template somebody has actually edited is
-     theirs and is left alone. Contracts already drawn up keep the
-     wording they froze at the time. */
-
-  // Hoisted, with its marks inside: load() runs before any const in
-  // this file exists, and reaching one from here would throw.
-  function isShippedSample(t) {
-    const marks = [
-      "The DJ will arrive 45\u201360 minutes before the set time to set up and perform a sound check.",
-      "an additional fee of up to 5% applies to cover transaction and processing fees",
-      "for 60 minutes afterwards to account for breakdown",
-    ];
-    if (!t || t.title !== "DJ Services Agreement" || !Array.isArray(t.sections)) return false;
-    if (t.sections.length !== 10) return false;
-    const all = t.sections.map(sec => sec.body || "").join("\n");
-    return marks.every(mark => all.includes(mark));
-  }
-
-  function dropShippedSample(settings) {
-    if (!isShippedSample(settings.contractTemplate)) return settings;
-    return { ...settings, contractTemplate: defaultContractTemplate() };
-  }
-
   function load() {
     const raw = localStorage.getItem(storageKey());
     if (!raw) return emptyState();
@@ -194,7 +167,6 @@
       contracts: parsed.contracts || [],
       packages: parsed.packages || [],
     };
-    base.settings = dropShippedSample(base.settings);
     try {
       base.invoices = base.invoices.map(migrateInvoice);
     } catch (e) {
@@ -6722,7 +6694,7 @@ const firebaseConfig = {
     LOCAL_ONLY_SETTINGS.forEach(k => { keptLocal[k] = state.settings[k]; });
     const contracts = data.contracts || [];
     return {
-      settings: dropShippedSample({ ...defaultSettings(), ...(data.settings || {}), ...keptLocal }),
+      settings: { ...defaultSettings(), ...(data.settings || {}), ...keptLocal },
       clients: data.clients || [],
       events: data.events || [],
       invoices: (data.invoices || []).map(migrateInvoice),

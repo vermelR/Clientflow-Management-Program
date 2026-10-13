@@ -155,7 +155,7 @@ Push the change and the live site now opens on a login screen. Anyone can create
 
 ### Bring your own contract
 
-Nobody is handed somebody else's agreement. A new account starts with no template at all, and the first contract walks you through one of two routes: **paste the contract you already use** — copied out of Word, Google Docs or a PDF, split into sections on its numbered or titled lines — or **start from a blank outline** of the standard headings with nothing written in them. Either way the wording is yours.
+Nobody is handed somebody else's agreement, and nothing ships with one. A new account starts with no template at all, and the first contract walks you through one of two routes: **paste the contract you already use** — copied out of Word, Google Docs or a PDF, split into sections on its numbered or titled lines — or **start from a blank outline** of the standard headings with nothing written in them. Either way the wording is yours.
 
 For a booking with several functions, `{{eventSchedule}}` writes the running order out under each date and `{{eventVenues}}` lists each venue with the dates it covers, so a three-day wedding reads the way it should instead of being squeezed into one date and time.
 

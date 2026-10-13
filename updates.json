@@ -1,6 +1,15 @@
 {
   "updates": [
     {
+      "title": "Fixed: a saved contract disappearing",
+      "date": "2026-10-13",
+      "notes": [
+        "A one-time cleanup, added when ClientFlow stopped shipping a contract of its own, was removing any template that matched that old example word for word — on every load, not just once.",
+        "Anyone who pasted in the sample wording lost their template each time they reopened the app. The cleanup is gone; your template is yours and stays put.",
+        "If yours vanished, paste it back in once under Settings → My contract. It will stick this time."
+      ]
+    },
+    {
       "title": "Saved packages, and what a gig really leaves you",
       "date": "2026-10-13",
       "notes": [
