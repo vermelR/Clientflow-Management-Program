@@ -32,9 +32,12 @@ window.DJCF_FIREBASE_CONFIG = {
 
    Find it in Google Cloud Console → APIs & Services → Credentials →
    OAuth 2.0 Client IDs → "Web client (auto created by Google Service)".
-   Copy the Client ID; it ends in .apps.googleusercontent.com. While
-   you're there, add your site's address under Authorised JavaScript
-   origins, or the browser will refuse the silent renewal.
+   Copy the whole Client ID: it starts with your project number, then a
+   dash and a long random tail, and ends .apps.googleusercontent.com —
+   about 70 characters in all. (Anything shorter is an example, not a
+   real id; the app checks the shape and ignores one that doesn't fit.)
+   While you're there, add your site's address under Authorised
+   JavaScript origins, or the browser will refuse the silent renewal.
 
    Like the keys above, this is not a secret. */
 window.DJCF_GOOGLE_CLIENT_ID = "1234567890-abc123.apps.googleusercontent.com";

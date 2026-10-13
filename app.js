@@ -141,7 +141,7 @@
   let state = load();
 
   function emptyState() {
-    return { settings: defaultSettings(), clients: [], events: [], invoices: [], contracts: [] };
+    return { settings: defaultSettings(), clients: [], events: [], invoices: [], contracts: [], packages: [] };
   }
 
   /* An earlier build shipped a worked example as the starting contract.
@@ -192,6 +192,7 @@
       events: parsed.events || [],
       invoices: parsed.invoices || [],
       contracts: parsed.contracts || [],
+      packages: parsed.packages || [],
     };
     base.settings = dropShippedSample(base.settings);
     try {
@@ -392,6 +393,56 @@
     return groups.map(g => `${fmtDateRange(g.first, g.last)}: ${g.place}`).join("\n");
   }
 
+  /* ---------------- What a gig costs ----------------
+     The fee isn't the takeaway: a wedding with two helpers, a van and
+     a rented moving head costs real money. Expenses are recorded
+     against the gig they belong to, so each one shows what it actually
+     earned. */
+
+  const EXPENSE_CATEGORIES = [
+    "Labor", "Travel & fuel", "Truck / van", "Rentals", "Lodging",
+    "Equipment", "Contractors", "Food", "Other",
+  ];
+
+  function gigExpenses(e) {
+    return (e && Array.isArray(e.expenses) ? e.expenses : [])
+      .filter(x => (x.name || "").trim() || Number(x.amount));
+  }
+
+  function expenseTotal(e) {
+    return gigExpenses(e).reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  }
+
+  // What the gig is worth: its invoices if there are any, otherwise the
+  // fee written on the booking.
+  function gigRevenue(e) {
+    const invs = state.invoices.filter(i => i.eventId === e.id);
+    if (invs.length) return invs.reduce((s, i) => s + invTotal(i), 0);
+    return Number(e.fee) || 0;
+  }
+
+  function gigProfit(e) {
+    return Math.round((gigRevenue(e) - expenseTotal(e)) * 100) / 100;
+  }
+
+  function gigMargin(e) {
+    const rev = gigRevenue(e);
+    if (!rev) return null;
+    return Math.round((gigProfit(e) / rev) * 100);
+  }
+
+  // Totals by category, biggest first.
+  function expensesByCategory(e) {
+    const by = new Map();
+    gigExpenses(e).forEach(x => {
+      const key = x.category || "Other";
+      by.set(key, (by.get(key) || 0) + (Number(x.amount) || 0));
+    });
+    return [...by.entries()]
+      .map(([category, amount]) => ({ category, amount }))
+      .sort((a, b) => b.amount - a.amount);
+  }
+
   function fmtTime(t) {
     if (!t) return "";
     const [h, m] = t.split(":").map(Number);
@@ -486,8 +537,16 @@
     modal.innerHTML = html;
     overlay.classList.remove("hidden");
     $(".modal-close", modal)?.addEventListener("click", closeModal);
+
+    // Focus the first field now, not on a timer. A deferred focus lands
+    // after the dialog is already usable, so anyone quick enough to
+    // click another field first had their opening keystrokes dragged
+    // back up here.
     const firstInput = $("input, select, textarea", modal);
-    if (firstInput) setTimeout(() => firstInput.focus(), 40);
+    if (firstInput) {
+      try { firstInput.focus({ preventScroll: true }); }
+      catch { firstInput.focus(); }
+    }
   }
 
   function closeModal() {
@@ -602,6 +661,11 @@
       .filter(i => i.status !== "draft" && !isFullyPaid(i))
       .reduce((s, i) => s + invBalance(i), 0);
 
+    // Costs recorded against gigs that happened this year.
+    const spentThisYear = state.events
+      .filter(e => (e.date || "").startsWith(String(year)) && e.status !== "cancelled")
+      .reduce((sum, e) => sum + expenseTotal(e), 0);
+
     const overdueCount = state.invoices.filter(i => invStatus(i) === "overdue").length;
     const depositCount = state.invoices.filter(i => invStatus(i) === "partial").length;
 
@@ -645,6 +709,12 @@
           <div class="stat-value pos">${money(paidThisYear)}</div>
           <div class="stat-note">Payments &amp; deposits received</div>
         </div>
+        ${spentThisYear > 0 ? `
+        <div class="card stat">
+          <div class="stat-label">Kept in ${year}</div>
+          <div class="stat-value ${paidThisYear - spentThisYear >= 0 ? "pos" : "warn"}">${money(paidThisYear - spentThisYear)}</div>
+          <div class="stat-note">After ${money(spentThisYear)} of gig costs</div>
+        </div>` : ""}
         <div class="card stat">
           <div class="stat-label">Outstanding balance</div>
           <div class="stat-value ${outstanding > 0 ? "warn" : ""}">${money(outstanding)}</div>
@@ -1022,6 +1092,15 @@
           <div class="field full"><label>Internal notes</label><textarea name="notes" placeholder="Load-in details, contact on site, parking…">${escapeHtml(val("notes"))}</textarea></div>
         </div>
 
+        <div class="section-label">What this gig costs you
+          <span class="section-hint">Labour, the van, fuel, rentals — anything you pay out for this booking. ClientFlow works out what's actually left.</span>
+        </div>
+        <div id="expenseRows"></div>
+        <div class="expense-foot">
+          <button type="button" class="btn btn-sm btn-ghost" id="addExpenseRow">+ Add an expense</button>
+          <span class="expense-running" id="expenseRunning"></span>
+        </div>
+
         <div class="section-label">Running order
           <span class="section-hint">For a booking with more than one function — Grah Shanti, Mehndi, Sangeet, Baraat, Reception. Each one gets its own date, time and (if it moves) its own venue. Leave it empty for a single-set gig.</span>
         </div>
@@ -1035,10 +1114,67 @@
         </div>
       </form>`), true);
 
-    // Running order: edited in place, kept outside FormData.
-    const schedule = (ev && Array.isArray(ev.schedule) ? JSON.parse(JSON.stringify(ev.schedule)) : []);
-    const scheduleHost = $("#scheduleRows");
     const form = $("#eventForm");
+
+    // Running order and expenses: edited in place, kept outside FormData.
+    const schedule = (ev && Array.isArray(ev.schedule) ? JSON.parse(JSON.stringify(ev.schedule)) : []);
+    const expenses = (ev && Array.isArray(ev.expenses) ? JSON.parse(JSON.stringify(ev.expenses)) : []);
+    const expenseHost = $("#expenseRows");
+
+    function expenseSum() {
+      return expenses.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+    }
+
+    function renderExpenses() {
+      expenseHost.innerHTML = expenses.map((row, i) => `
+        <div class="expense-row" data-i="${i}">
+          <select class="exp" data-i="${i}" data-f="category">
+            ${EXPENSE_CATEGORIES.map(c => `<option ${c === (row.category || "Other") ? "selected" : ""}>${c}</option>`).join("")}
+          </select>
+          <input class="exp" data-i="${i}" data-f="name" value="${escapeHtml(row.name || "")}" placeholder="What it was (e.g. 2 helpers, U-Haul + gas)">
+          <input class="exp" data-i="${i}" data-f="amount" type="number" min="0" step="0.01" value="${escapeHtml(row.amount ?? "")}" placeholder="0.00">
+          <button type="button" class="remove-line" data-exp-del="${i}" title="Remove">✕</button>
+        </div>`).join("");
+
+      $$("[data-exp-del]", expenseHost).forEach(b => b.addEventListener("click", () => {
+        expenses.splice(Number(b.dataset.expDel), 1);
+        renderExpenses();
+      }));
+      updateExpenseRunning();
+    }
+
+    function updateExpenseRunning() {
+      const el = $("#expenseRunning");
+      if (!el) return;
+      const spent = expenseSum();
+      const fee = Number(form.fee.value) || 0;
+      el.innerHTML = spent
+        ? `Costs <strong>${money(spent)}</strong>${fee ? ` · leaves <strong class="${fee - spent >= 0 ? "pos" : "warn"}">${money(fee - spent)}</strong> of the ${money(fee)} fee` : ""}`
+        : "";
+    }
+
+    expenseHost.addEventListener("input", e => {
+      const el = e.target;
+      if (!el.classList.contains("exp")) return;
+      const row = expenses[Number(el.dataset.i)];
+      if (row) row[el.dataset.f] = el.value;
+      updateExpenseRunning();
+    });
+    expenseHost.addEventListener("change", e => {
+      const el = e.target;
+      if (!el.classList.contains("exp")) return;
+      const row = expenses[Number(el.dataset.i)];
+      if (row) row[el.dataset.f] = el.value;
+    });
+
+    $("#addExpenseRow").addEventListener("click", () => {
+      expenses.push({ id: uid(), category: "Labor", name: "", amount: "" });
+      renderExpenses();
+      $$(".expense-row .exp", expenseHost).slice(-3)[0]?.focus();
+    });
+
+    renderExpenses();
+    const scheduleHost = $("#scheduleRows");
 
     function renderSchedule() {
       scheduleHost.innerHTML = schedule.map((row, i) => `
@@ -1063,6 +1199,8 @@
       const row = schedule[Number(el.dataset.i)];
       if (row) row[el.dataset.f] = el.value;
     });
+
+    form.fee.addEventListener("input", updateExpenseRunning);
 
     $("#addScheduleRow").addEventListener("click", () => {
       const last = schedule[schedule.length - 1];
@@ -1108,6 +1246,15 @@
         .sort((a, b) => (a.date || "").localeCompare(b.date || "")
           || (a.startTime || "").localeCompare(b.startTime || ""));
 
+      data.expenses = expenses
+        .filter(x => (x.name || "").trim() || Number(x.amount))
+        .map(x => ({
+          id: x.id || uid(),
+          category: x.category || "Other",
+          name: (x.name || "").trim(),
+          amount: Number(x.amount) || 0,
+        }));
+
       // A running order that runs past the end date should widen it
       // rather than silently fall off the calendar.
       const lastDay = data.schedule.reduce((m, r) => (r.date > m ? r.date : m), data.endDate || data.date);
@@ -1140,8 +1287,29 @@
         <div class="detail-item"><div class="lbl">Client</div><div class="val">${c ? `<a href="#" data-open-client="${c.id}">${escapeHtml(c.name)}</a>` : "—"}</div></div>
         <div class="detail-item"><div class="lbl">Venue</div><div class="val">${escapeHtml(e.venue || "—")}${e.address ? `<br><span style="color:var(--muted);font-size:12.5px">${escapeHtml(e.address)}</span>` : ""}</div></div>
         <div class="detail-item"><div class="lbl">Guests</div><div class="val">${escapeHtml(e.guestCount || "—")}</div></div>
-        <div class="detail-item"><div class="lbl">Fee</div><div class="val"><strong>${e.fee ? money(e.fee) : "—"}</strong></div></div>
+        <div class="detail-item"><div class="lbl">Fee</div>
+          <div class="val"><strong>${e.fee ? money(e.fee) : "—"}</strong>${gigExpenses(e).length
+            ? `<span class="sub">${money(gigProfit(e))} after costs</span>` : ""}</div>
+        </div>
       </div>
+      ${gigExpenses(e).length ? `<div class="section-label">What it cost</div>
+        <div class="profit-panel">
+          <div class="profit-row">
+            <div class="profit-stat"><div class="lbl">Brings in</div><div class="val">${money(gigRevenue(e))}</div></div>
+            <div class="profit-stat"><div class="lbl">Costs</div><div class="val warn">−${money(expenseTotal(e))}</div></div>
+            <div class="profit-stat"><div class="lbl">You keep</div>
+              <div class="val ${gigProfit(e) >= 0 ? "pos" : "warn"}">${money(gigProfit(e))}</div>
+              ${gigMargin(e) !== null ? `<div class="profit-note">${gigMargin(e)}% of the fee</div>` : ""}
+            </div>
+          </div>
+          <div class="table-wrap"><table class="exp-table">
+            <tbody>
+              ${expensesByCategory(e).map(c => `
+                <tr class="exp-cat"><td>${escapeHtml(c.category)}</td><td class="right nowrap">${money(c.amount)}</td></tr>
+                ${gigExpenses(e).filter(x => (x.category || "Other") === c.category).map(x => `
+                  <tr><td class="exp-name">${escapeHtml(x.name || "—")}</td><td class="right nowrap">${money(Number(x.amount) || 0)}</td></tr>`).join("")}`).join("")}
+            </tbody></table></div>
+        </div>` : ""}
       ${hasSchedule(e) ? `<div class="section-label">Running order</div>
         <div class="table-wrap"><table class="sched-table"><tbody>
           ${scheduleByDate(e).map(day => `
@@ -1266,15 +1434,23 @@
     }
 
     const s = state.settings;
-    const number = inv ? inv.number : s.invoicePrefix + String(s.nextInvoiceNumber).padStart(3, "0");
-    const issueDate = inv?.issueDate || todayISO();
-    const dueDate = inv?.dueDate || addDaysISO(issueDate, s.defaultDueDays || 14);
-    const clientId = inv?.clientId || preset.clientId || "";
-    const eventId = inv?.eventId || preset.eventId || "";
+    // Set when the dialog is handed to another screen and back again,
+    // so nothing typed so far is lost on the way.
+    const kept = preset.form || {};
+    const number = kept.number ?? (inv ? inv.number : s.invoicePrefix + String(s.nextInvoiceNumber).padStart(3, "0"));
+    const issueDate = kept.issueDate || inv?.issueDate || todayISO();
+    const dueDate = kept.dueDate || inv?.dueDate || addDaysISO(issueDate, s.defaultDueDays || 14);
+    const clientId = kept.clientId ?? (inv?.clientId || preset.clientId || "");
+    const eventId = kept.eventId ?? (inv?.eventId || preset.eventId || "");
+    const status = kept.status || inv?.status || "draft";
+    const taxRate = kept.taxRate ?? inv?.taxRate ?? s.taxRate ?? 0;
+    const notes = kept.notes ?? inv?.notes ?? s.paymentInstructions ?? "";
 
     // Working copy the editor mutates; committed on submit.
     let draft;
-    if (inv) {
+    if (preset.draft) {
+      draft = preset.draft;
+    } else if (inv) {
       draft = JSON.parse(JSON.stringify({
         groups: inv.groups, discounts: inv.discounts,
         hotelEnabled: !!inv.hotelEnabled, hotelText: inv.hotelText || s.hotelText,
@@ -1306,7 +1482,7 @@
           </div>
           <div class="field"><label>Status</label>
             <select name="status">
-              ${["draft", "sent", "paid"].map(st => `<option value="${st}" ${(inv?.status || "draft") === st ? "selected" : ""}>${STATUS_LABEL[st]}</option>`).join("")}
+              ${["draft", "sent", "paid"].map(st => `<option value="${st}" ${status === st ? "selected" : ""}>${STATUS_LABEL[st]}</option>`).join("")}
             </select>
           </div>
           <div class="field"><label>Issue date</label><input name="issueDate" type="date" value="${escapeHtml(issueDate)}"></div>
@@ -1332,7 +1508,7 @@
         <div class="invoice-totals">
           <div class="totals-row"><span class="lbl">Subtotal</span><span id="tSubtotal">$0.00</span></div>
           <div class="totals-row">
-            <span class="lbl">Tax % <input id="taxRateInput" type="number" min="0" step="0.01" class="mini-num" value="${escapeHtml(inv?.taxRate ?? s.taxRate ?? 0)}"></span>
+            <span class="lbl">Tax % <input id="taxRateInput" type="number" min="0" step="0.01" class="mini-num" value="${escapeHtml(taxRate)}"></span>
             <span id="tTax">$0.00</span>
           </div>
           <div class="totals-row"><span class="lbl">Discounts</span><span id="tDiscount">−$0.00</span></div>
@@ -1340,7 +1516,7 @@
         </div>
 
         <div class="field" style="margin-top:14px"><label>Notes to client</label>
-          <textarea name="notes" placeholder="Deposit terms, thank-you note…">${escapeHtml(inv?.notes ?? s.paymentInstructions ?? "")}</textarea>
+          <textarea name="notes" placeholder="Deposit terms, thank-you note…">${escapeHtml(notes)}</textarea>
         </div>
 
         <div class="modal-actions">
@@ -1360,6 +1536,23 @@
       eventId: form.eventId.value || eventId,
     }));
 
+    // Hands the dialog to another screen and comes back with everything
+    // typed so far still in place. Everything is read out of `form`,
+    // not the document: by the time this runs the dialog has already
+    // been given to the other screen and the fields are detached.
+    function reopenEditor() {
+      const fd = Object.fromEntries(new FormData(form).entries());
+      openInvoiceForm(id, {
+        ...preset,
+        draft,
+        form: {
+          number: fd.number, clientId: fd.clientId, eventId: fd.eventId,
+          status: fd.status, issueDate: fd.issueDate, dueDate: fd.dueDate,
+          notes: fd.notes, taxRate: $("#taxRateInput", form)?.value,
+        },
+      });
+    }
+
     function renderEditor() {
       groupsEl.innerHTML = draft.groups.map((g, gi) => `
         <div class="group-card">
@@ -1376,6 +1569,7 @@
                 <label class="comp-toggle" title="Complimentary — shows COMP on invoice">
                   <input type="checkbox" class="ed" data-g="${gi}" data-i="${ii}" data-f="comp" ${it.comp ? "checked" : ""}> COMP
                 </label>
+                <button type="button" class="remove-line" data-act="save-pkg" data-g="${gi}" data-i="${ii}" title="Save this as a package">💾</button>
                 <button type="button" class="remove-line" data-act="rm-item" data-g="${gi}" data-i="${ii}" title="Remove item">✕</button>
               </div>
               <div class="detail-rows">
@@ -1388,7 +1582,10 @@
                 <button type="button" class="btn btn-sm btn-ghost" data-act="add-detail" data-g="${gi}" data-i="${ii}">+ Included item</button>
               </div>
             </div>`).join("")}
-          <button type="button" class="btn btn-sm btn-ghost" data-act="add-item" data-g="${gi}">+ Add item</button>
+          <div class="group-add">
+            <button type="button" class="btn btn-sm btn-ghost" data-act="add-item" data-g="${gi}">+ Add item</button>
+            <button type="button" class="btn btn-sm" data-act="add-package" data-g="${gi}">📦 From my packages${packages().length ? ` (${packages().length})` : ""}</button>
+          </div>
         </div>`).join("");
 
       discountsEl.innerHTML = draft.discounts.length ? draft.discounts.map((d, di) => `
@@ -1450,6 +1647,28 @@
       const act = btn.dataset.act;
       if (act === "rm-group") { if (draft.groups.length > 1) draft.groups.splice(g, 1); else draft.groups = [newGroup()]; }
       else if (act === "add-item") draft.groups[g].items.push(newItem());
+      else if (act === "add-package") {
+        // The editor is in a dialog, so the picker replaces it and the
+        // draft is handed back untouched when it closes.
+        const back = () => { reopenEditor(); };
+        openPackagePicker(item => {
+          const group = draft.groups[g];
+          // An untouched blank first line is replaced, not added to.
+          const only = group.items.length === 1 && !group.items[0].name && !group.items[0].price;
+          if (only) group.items[0] = item; else group.items.push(item);
+        }, back);
+        return;
+      }
+      else if (act === "save-pkg") {
+        const item = draft.groups[g].items[i];
+        if (!item || !(item.name || "").trim()) { toast("Give the line a name first"); return; }
+        const name = prompt("Save this line as a package called:", item.name);
+        if (name === null) return;
+        saveItemAsPackage(item, name);
+        renderEditor();
+        toast("Saved to your packages 📦");
+        return;
+      }
       else if (act === "rm-item") { const items = draft.groups[g].items; if (items.length > 1) items.splice(i, 1); else draft.groups[g].items = [newItem()]; }
       else if (act === "add-detail") draft.groups[g].items[i].details.push({ name: "", qty: 1 });
       else if (act === "rm-detail") draft.groups[g].items[i].details.splice(d, 1);
@@ -1934,7 +2153,7 @@
         </p>
         <div class="form-grid">
           <div class="field"><label>Amount received *</label>
-            <input name="amount" type="number" step="0.01" min="0.01" required value="${escapeHtml(amount || "")}" autofocus>
+            <input name="amount" type="number" step="0.01" min="0.01" required value="${escapeHtml(amount || "")}">
           </div>
           <div class="field"><label>Date received</label>
             <input name="date" type="date" value="${todayISO()}">
@@ -2157,12 +2376,33 @@
     return !!gmailToken && Date.now() < gmailToken.expiresAt - 60000;
   }
 
+  // A real Google client id is the project number, a dash, and a long
+  // random tail. Checking the shape catches the example from the docs
+  // being pasted in by mistake, which would otherwise look configured
+  // while silently failing every renewal.
+  const CLIENT_ID_SHAPE = /^\d{6,}-[a-z0-9_-]{12,}\.apps\.googleusercontent\.com$/i;
+
+  function looksLikeClientId(value) {
+    return CLIENT_ID_SHAPE.test((value || "").trim());
+  }
+
   // The client id the silent renewal needs: baked in for the hosted
   // app, or pasted by someone running their own copy.
   function googleClientId() {
     const hosted = (window.DJCF_GOOGLE_CLIENT_ID || "").trim();
-    if (hosted && !hosted.startsWith("YOUR_")) return hosted;
-    return (state.settings.googleClientId || "").trim();
+    if (looksLikeClientId(hosted)) return hosted;
+    const own = (state.settings.googleClientId || "").trim();
+    return looksLikeClientId(own) ? own : "";
+  }
+
+  // Set when something that looks like a placeholder is in its place,
+  // so Settings can say so instead of claiming to be set up.
+  function googleClientIdProblem() {
+    const hosted = (window.DJCF_GOOGLE_CLIENT_ID || "").trim();
+    const own = (state.settings.googleClientId || "").trim();
+    const value = hosted || own;
+    if (!value || value.startsWith("YOUR_")) return "";
+    return looksLikeClientId(value) ? "" : value;
   }
 
   let gsiPromise = null;
@@ -2754,6 +2994,23 @@
       </div>
 
       <div class="card card-pad" style="max-width:720px;margin-top:20px">
+        <div class="card-title">📦 My packages</div>
+        <p class="settings-note">
+          The line items you put on most invoices — a sound package with its speakers and microphones
+          listed underneath, a lighting package, uplighting. Saved once with their usual price, then
+          dropped onto an invoice in one click.
+        </p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <button class="btn" id="openPackages">${packages().length ? "⚙️ Manage my packages" : "📦 Build my first package"}</button>
+          <span class="settings-note" style="margin:0">
+            ${packages().length
+              ? `${packages().length} saved${packages().length > 3 ? "" : " — add the ones you use most"}`
+              : "Nothing saved yet — you can also save any line straight off an invoice"}
+          </span>
+        </div>
+      </div>
+
+      <div class="card card-pad" style="max-width:720px;margin-top:20px">
         <div class="card-title">📝 Contracts &amp; signing</div>
         <p class="settings-note">
           Your own agreement lives here — ClientFlow doesn't come with one. Paste in the contract you
@@ -2867,9 +3124,15 @@
               With your project's OAuth client id below, ClientFlow renews it quietly in the background
               and you stop seeing the Google window. ${googleClientId()
                 ? `<strong>Set up ✅</strong> — nothing more to do.`
-                : `Find it in <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console → Credentials</a>,
-                   under <em>Web client (auto created by Google Service)</em>, and add this site under
-                   Authorised JavaScript origins while you're there.`}
+                : googleClientIdProblem()
+                  ? `<strong style="color:var(--red)">That isn't a real client id.</strong>
+                     <code>${escapeHtml(googleClientIdProblem())}</code> is the example from the instructions.
+                     Yours starts with your project number and has a long random tail — find it in
+                     <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console → Credentials</a>
+                     under <em>Web client (auto created by Google Service)</em>.`
+                  : `Find it in <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console → Credentials</a>,
+                     under <em>Web client (auto created by Google Service)</em>, and add this site under
+                     Authorised JavaScript origins while you're there.`}
             </p>
             ${googleClientId() ? "" : `
               <div class="form-grid">
@@ -2980,6 +3243,10 @@
     });
     $("#testCalendly", root)?.addEventListener("click", () => window.open(calendlyLink(), "_blank", "noopener"));
 
+    $("#openPackages", root).addEventListener("click", () => {
+      commitSettingsRef?.();
+      openPackageManager();
+    });
     $("#openTemplate", root).addEventListener("click", () => {
       commitSettingsRef?.();
       if (templateReady()) openTemplateEditor();
@@ -3073,8 +3340,8 @@
     $("#saveClientId", root)?.addEventListener("click", () => {
       commitSettingsRef?.();
       const raw = $("#googleClientId", root).value.trim();
-      if (raw && !/\.apps\.googleusercontent\.com$/.test(raw)) {
-        toast("That should end in .apps.googleusercontent.com");
+      if (raw && !looksLikeClientId(raw)) {
+        toast("That doesn't look like a real client id — copy the whole thing from Google");
         return;
       }
       state.settings.googleClientId = raw;
@@ -3130,6 +3397,7 @@
             events: data.events || [],
             invoices: (data.invoices || []).map(migrateInvoice),
             contracts: data.contracts || [],
+            packages: data.packages || [],
           };
           save(); render(); toast("Backup imported");
 
@@ -3834,6 +4102,243 @@ const firebaseConfig = {
       };
     }
     rerender();
+  }
+
+  /* ================= SAVED PACKAGES =================
+     The same few line items go out on most invoices — a sound package
+     with its speakers and microphones listed underneath, a lighting
+     package, an uplighting count. They're kept here once, with their
+     included items and usual price, and dropped into an invoice in one
+     click instead of being typed again. */
+
+  const PACKAGE_LIMIT = 200;
+
+  function packages() { return state.packages || (state.packages = []); }
+  function packageById(id) { return packages().find(p => p.id === id); }
+
+  function packageTotal(pkg) {
+    return (Number(pkg.price) || 0) * (Number(pkg.qty) || 1);
+  }
+
+  function packageSummary(pkg) {
+    const d = (pkg.details || []).filter(x => (x.name || "").trim());
+    if (!d.length) return "No included items";
+    return d.map(x => `${x.name}${Number(x.qty) > 1 ? ` ×${x.qty}` : ""}`).join(", ");
+  }
+
+  // An invoice line built from a package — a copy, so editing the line
+  // later never reaches back into the library.
+  function packageToItem(pkg) {
+    return {
+      name: pkg.name || "",
+      qty: Number(pkg.qty) || 1,
+      price: pkg.price === "" || pkg.price == null ? "" : Number(pkg.price) || 0,
+      comp: false,
+      details: (pkg.details || [])
+        .filter(d => (d.name || "").trim())
+        .map(d => ({ name: d.name, qty: Number(d.qty) || 1 })),
+    };
+  }
+
+  function saveItemAsPackage(item, name) {
+    const pkg = {
+      id: uid(),
+      name: (name || item.name || "Package").trim(),
+      qty: Number(item.qty) || 1,
+      price: Number(item.price) || 0,
+      details: (item.details || [])
+        .filter(d => (d.name || "").trim())
+        .map(d => ({ name: d.name.trim(), qty: Number(d.qty) || 1 })),
+      createdAt: todayISO(),
+    };
+    packages().unshift(pkg);
+    if (packages().length > PACKAGE_LIMIT) packages().length = PACKAGE_LIMIT;
+    save();
+    return pkg;
+  }
+
+  /* ---------- Picking one for an invoice ---------- */
+
+  // onPick receives the item to add. The dialog stays open so several
+  // packages can go on in a row.
+  function openPackagePicker(onPick, onDone) {
+    const list = packages();
+
+    function body() {
+      return `
+        <p class="settings-note">
+          Click a package to drop it onto this section — included items and price come with it.
+          You can change anything afterwards; the saved copy isn't touched.
+        </p>
+        ${list.length ? `
+          <div class="pkg-list">
+            ${list.map(p => `
+              <button type="button" class="pkg-card" data-pick="${p.id}">
+                <span class="pkg-main">
+                  <span class="pkg-name">${escapeHtml(p.name || "Untitled package")}</span>
+                  <span class="pkg-detail">${escapeHtml(packageSummary(p))}</span>
+                </span>
+                <span class="pkg-price">${(p.price === "" || p.price == null) ? "—" : money(packageTotal(p))}</span>
+              </button>`).join("")}
+          </div>`
+        : `<div class="notes-box">
+             No packages saved yet. Build one here, or save any line you've already typed
+             on an invoice with the 💾 button next to it.
+           </div>`}
+        <div class="modal-actions" style="flex-wrap:wrap">
+          <button type="button" class="btn" id="pkgManage">⚙️ Manage packages</button>
+          <button type="button" class="btn btn-primary" id="pkgDone">Done</button>
+        </div>`;
+    }
+
+    function mount() {
+      openModal(modalShell("My packages", body()), true);
+      $$("[data-pick]").forEach(btn => btn.addEventListener("click", () => {
+        const pkg = packageById(btn.dataset.pick);
+        if (!pkg) return;
+        onPick(packageToItem(pkg));
+        btn.classList.add("picked");
+        toast(`${pkg.name} added`);
+      }));
+      $("#pkgManage").addEventListener("click", () => openPackageManager(() => openPackagePicker(onPick, onDone)));
+      $("#pkgDone").addEventListener("click", () => (onDone ? onDone() : closeModal()));
+    }
+
+    mount();
+  }
+
+  /* ---------- Managing the library ---------- */
+
+  function openPackageManager(onDone) {
+    function body() {
+      const list = packages();
+      return `
+        <p class="settings-note">
+          Your usual line items, ready to drop onto an invoice. Each one carries its included
+          items and its normal price.
+        </p>
+        ${list.length ? `
+          <div class="pkg-list">
+            ${list.map(p => `
+              <div class="pkg-card static">
+                <span class="pkg-main">
+                  <span class="pkg-name">${escapeHtml(p.name || "Untitled package")}</span>
+                  <span class="pkg-detail">${escapeHtml(packageSummary(p))}</span>
+                </span>
+                <span class="pkg-price">${(p.price === "" || p.price == null) ? "—" : money(packageTotal(p))}</span>
+                <span class="pkg-actions">
+                  <button type="button" class="btn btn-sm" data-pkg-edit="${p.id}">Edit</button>
+                  <button type="button" class="remove-line" data-pkg-del="${p.id}" title="Delete">✕</button>
+                </span>
+              </div>`).join("")}
+          </div>`
+        : `<div class="notes-box">Nothing saved yet.</div>`}
+        <div class="modal-actions">
+          <button type="button" class="btn" id="pkgBack">${onDone ? "← Back" : "Close"}</button>
+          <button type="button" class="btn btn-primary" id="pkgNew">+ New package</button>
+        </div>`;
+    }
+
+    function mount() {
+      openModal(modalShell("Manage packages", body()), true);
+      $("#pkgBack").addEventListener("click", () => (onDone ? onDone() : closeModal()));
+      $("#pkgNew").addEventListener("click", () => openPackageForm(null, mount));
+      $$("[data-pkg-edit]").forEach(b => b.addEventListener("click", () => openPackageForm(b.dataset.pkgEdit, mount)));
+      $$("[data-pkg-del]").forEach(b => b.addEventListener("click", () => {
+        const pkg = packageById(b.dataset.pkgDel);
+        if (!pkg || !confirm(`Delete "${pkg.name}"? Invoices already using it keep their lines.`)) return;
+        state.packages = packages().filter(p => p.id !== pkg.id);
+        save();
+        mount();
+        toast("Package deleted");
+      }));
+    }
+
+    mount();
+  }
+
+  function openPackageForm(id, onDone) {
+    const pkg = id ? packageById(id) : null;
+    const details = pkg ? JSON.parse(JSON.stringify(pkg.details || [])) : [];
+    if (!details.length) details.push({ name: "", qty: 1 });
+
+    openModal(modalShell(pkg ? "Edit package" : "New package", `
+      <form id="pkgForm">
+        <div class="form-grid">
+          <div class="field full"><label>Package name *</label>
+            <input name="name" required value="${escapeHtml(pkg ? pkg.name : "")}" placeholder="e.g. Basic Sound Package">
+          </div>
+          <div class="field"><label>Usual price</label>
+            <input name="price" type="number" min="0" step="0.01" value="${escapeHtml(pkg && pkg.price !== "" ? pkg.price : "")}" placeholder="0.00">
+          </div>
+          <div class="field"><label>Default quantity</label>
+            <input name="qty" type="number" min="0" step="0.5" value="${escapeHtml(pkg ? (pkg.qty || 1) : 1)}">
+          </div>
+        </div>
+
+        <div class="section-label">Included items
+          <span class="section-hint">These print under the package on the invoice, without a price of their own — RCF 945 ×2, Wireless Microphone ×2, and so on.</span>
+        </div>
+        <div id="pkgDetails"></div>
+        <button type="button" class="btn btn-sm btn-ghost" id="pkgAddDetail">+ Add included item</button>
+
+        <div class="modal-actions">
+          <button type="button" class="btn" id="pkgCancel">Cancel</button>
+          <button type="submit" class="btn btn-primary">${pkg ? "Save changes" : "Save package"}</button>
+        </div>
+      </form>`));
+
+    const host = $("#pkgDetails");
+
+    function renderDetails() {
+      host.innerHTML = details.map((d, i) => `
+        <div class="detail-row">
+          <input class="pd" data-i="${i}" data-f="name" value="${escapeHtml(d.name || "")}" placeholder="Included item (e.g. RCF 945)">
+          <input class="pd" data-i="${i}" data-f="qty" type="number" min="0" value="${escapeHtml(d.qty || 1)}" title="Qty">
+          <button type="button" class="remove-line" data-pd-del="${i}" title="Remove">✕</button>
+        </div>`).join("");
+      $$("[data-pd-del]", host).forEach(b => b.addEventListener("click", () => {
+        details.splice(Number(b.dataset.pdDel), 1);
+        if (!details.length) details.push({ name: "", qty: 1 });
+        renderDetails();
+      }));
+    }
+
+    host.addEventListener("input", e => {
+      const el = e.target;
+      if (!el.classList.contains("pd")) return;
+      const row = details[Number(el.dataset.i)];
+      if (row) row[el.dataset.f] = el.value;
+    });
+
+    $("#pkgAddDetail").addEventListener("click", () => {
+      details.push({ name: "", qty: 1 });
+      renderDetails();
+      $$(".detail-row .pd", host).slice(-2)[0]?.focus();
+    });
+
+    renderDetails();
+
+    $("#pkgCancel").addEventListener("click", () => (onDone ? onDone() : closeModal()));
+    $("#pkgForm").addEventListener("submit", e => {
+      e.preventDefault();
+      const fd = Object.fromEntries(new FormData(e.target).entries());
+      const record = {
+        name: (fd.name || "").trim(),
+        qty: Number(fd.qty) || 1,
+        price: fd.price === "" ? "" : Number(fd.price) || 0,
+        details: details
+          .filter(d => (d.name || "").trim())
+          .map(d => ({ name: d.name.trim(), qty: Number(d.qty) || 1 })),
+      };
+      if (!record.name) { toast("Give the package a name"); return; }
+
+      if (pkg) Object.assign(pkg, record);
+      else packages().unshift({ id: uid(), createdAt: todayISO(), ...record });
+      save();
+      toast(pkg ? "Package updated" : "Package saved 📦");
+      if (onDone) onDone(); else closeModal();
+    });
   }
 
   /* ================= CONTRACTS =================
@@ -6174,6 +6679,7 @@ const firebaseConfig = {
     state.events = guestState.events || [];
     state.invoices = (guestState.invoices || []).map(migrateInvoice);
     state.contracts = guestState.contracts || [];
+    state.packages = guestState.packages || [];
     const keptLocal = {};
     LOCAL_ONLY_SETTINGS.forEach(k => { keptLocal[k] = state.settings[k]; });
     state.settings = { ...state.settings, ...(guestState.settings || {}), ...keptLocal };
@@ -6191,6 +6697,7 @@ const firebaseConfig = {
       events: data.events || [],
       invoices: (data.invoices || []).map(migrateInvoice),
       contracts,
+      packages: data.packages || [],
     };
   }
 
@@ -6212,7 +6719,7 @@ const firebaseConfig = {
   function mergeRemoteIntoLocal(data) {
     const remote = remoteToState(data);
     let added = 0;
-    ["clients", "events", "invoices", "contracts"].forEach(key => {
+    ["clients", "events", "invoices", "contracts", "packages"].forEach(key => {
       const merged = new Map((remote[key] || []).map(r => [r.id, r]));
       (state[key] || []).forEach(localRec => {
         if (!merged.has(localRec.id)) { merged.set(localRec.id, localRec); added++; }
@@ -6238,6 +6745,7 @@ const firebaseConfig = {
     const payload = {
       settings, clients: state.clients, events: state.events, invoices: state.invoices,
       contracts: state.contracts || [],
+      packages: state.packages || [],
       deviceId, updatedAt: cloud.fs.serverTimestamp(), schema: 2,
     };
     if (JSON.stringify(payload).length > CLOUD_DOC_LIMIT) {

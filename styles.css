@@ -1201,3 +1201,66 @@ tr.row-hotel td.hotel-label { font-weight: 700; color: #e85d26; font-size: 13px;
 
 .cal-error { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .cal-error .btn { flex-shrink: 0; }
+
+/* ---------- Saved packages ---------- */
+.group-add { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.pkg-list { display: flex; flex-direction: column; gap: 8px; margin: 14px 0 4px; }
+.pkg-card {
+  display: flex; align-items: center; gap: 14px; width: 100%; text-align: left;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--card);
+  padding: 12px 15px; font: inherit; color: inherit; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.pkg-card:hover { border-color: var(--accent); background: var(--accent-soft); }
+.pkg-card.static { cursor: default; }
+.pkg-card.static:hover { border-color: var(--border); background: var(--card); }
+.pkg-card.picked { border-color: var(--green); background: var(--green-soft); }
+.pkg-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.pkg-name { font-size: 14px; font-weight: 700; }
+.pkg-detail {
+  font-size: 12.5px; color: var(--muted); line-height: 1.5;
+  overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.pkg-price { font-size: 14px; font-weight: 700; white-space: nowrap; flex-shrink: 0; }
+.pkg-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+
+/* ---------- What a gig costs ---------- */
+.expense-row {
+  display: grid; gap: 8px; align-items: center; margin-bottom: 8px;
+  grid-template-columns: 150px minmax(0, 1fr) 120px 28px;
+}
+.expense-row input, .expense-row select { width: 100%; }
+.expense-foot { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.expense-running { font-size: 12.5px; color: var(--muted); }
+.expense-running .pos { color: var(--green); }
+.expense-running .warn { color: var(--red); }
+
+.profit-panel {
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--card); padding: 14px 16px; margin-bottom: 4px;
+}
+.profit-row { display: flex; gap: 26px; flex-wrap: wrap; margin-bottom: 10px; }
+.profit-stat .lbl {
+  font-size: 11.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.03em; color: var(--muted); margin-bottom: 3px;
+}
+.profit-stat .val { font-size: 20px; font-weight: 700; }
+.profit-stat .val.pos { color: var(--green); }
+.profit-stat .val.warn { color: var(--red); }
+.profit-note { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.exp-table td { font-size: 13px; }
+.exp-table tr.exp-cat td {
+  font-weight: 700; font-size: 12px; text-transform: uppercase;
+  letter-spacing: 0.03em; color: var(--accent-dark); padding-top: 12px;
+}
+.exp-table td.exp-name { padding-left: 22px; color: var(--muted); }
+
+@media (max-width: 860px) {
+  .expense-row { grid-template-columns: 1fr 110px 28px; }
+  .expense-row input[data-f="name"] { grid-column: 1 / 4; }
+}
+
+.detail-item .val .sub {
+  display: block; font-size: 12px; color: var(--muted); font-weight: 400; margin-top: 2px;
+}

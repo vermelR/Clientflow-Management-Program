@@ -1,6 +1,19 @@
 {
   "updates": [
     {
+      "title": "Saved packages, and what a gig really leaves you",
+      "date": "2026-10-13",
+      "notes": [
+        "Save the line items you use on most invoices — a sound package at its usual price with RCF 945 ×2, Wireless Microphone ×2 and the rest listed underneath — and drop one onto an invoice in a click instead of typing it again.",
+        "Already typed a line you'll reuse? Hit the 💾 next to it and it goes straight into your library.",
+        "Manage them in Settings → My packages, or from the picker itself. Editing a saved package never changes invoices already sent.",
+        "Gigs now take expenses: labour, the van, fuel, rentals, lodging, contractors. Add them on the gig and the form totals as you type, showing what's left of the fee.",
+        "The gig then shows what it brings in, what it costs and what you keep, broken down by category, with the margin worked out. Once a gig is invoiced the invoice total is used instead of the booking fee.",
+        "The dashboard gained a “Kept in” figure: what you collected this year less what the year's gigs cost you.",
+        "Fixed: for the first fraction of a second after any dialog opened, typing could land in the first field instead of the one you clicked."
+      ]
+    },
+    {
       "title": "Google stops asking every hour",
       "date": "2026-10-11",
       "notes": [
