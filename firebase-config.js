@@ -37,7 +37,7 @@ window.DJCF_FIREBASE_CONFIG = {
    origins, or the browser will refuse the silent renewal.
 
    Like the keys above, this is not a secret. */
-window.DJCF_GOOGLE_CLIENT_ID = "YOUR_OAUTH_CLIENT_ID.apps.googleusercontent.com";
+window.DJCF_GOOGLE_CLIENT_ID = "1234567890-abc123.apps.googleusercontent.com";
 
 /* Optional branding for the login screen of your hosted app. */
 window.DJCF_APP_INFO = {
