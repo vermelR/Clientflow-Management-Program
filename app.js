@@ -1569,7 +1569,7 @@
                 <label class="comp-toggle" title="Complimentary — shows COMP on invoice">
                   <input type="checkbox" class="ed" data-g="${gi}" data-i="${ii}" data-f="comp" ${it.comp ? "checked" : ""}> COMP
                 </label>
-                <button type="button" class="remove-line" data-act="save-pkg" data-g="${gi}" data-i="${ii}" title="Save this as a package">💾</button>
+                <button type="button" class="line-action" data-act="save-pkg" data-g="${gi}" data-i="${ii}" title="Save this line as a package">💾</button>
                 <button type="button" class="remove-line" data-act="rm-item" data-g="${gi}" data-i="${ii}" title="Remove item">✕</button>
               </div>
               <div class="detail-rows">
@@ -4756,7 +4756,21 @@ const firebaseConfig = {
     const eventId = base.eventId || "";
     const ev = eventId ? eventById(eventId) : null;
     const t = base.terms || {};
-    const fee = t.fee != null ? t.fee : (ev && ev.fee) || "";
+
+    // What this contract is worth, in the order a DJ would expect: the
+    // invoice if one is linked, otherwise everything invoiced against
+    // the gig, otherwise the fee written on the booking.
+    function autoFeeFor(eventId, invoiceId) {
+      const linked = invoiceId ? invoiceById(invoiceId) : null;
+      if (linked) return String(invTotal(linked));
+      const gig = eventId ? eventById(eventId) : null;
+      if (!gig) return "";
+      const revenue = gigRevenue(gig);
+      return revenue ? String(revenue) : "";
+    }
+
+    const suggested = autoFeeFor(eventId, base.invoiceId || "");
+    const fee = t.fee != null ? t.fee : suggested;
 
     openModal(modalShell(ct ? `Edit ${ct.number}` : "New contract", `
       <form id="contractForm">
@@ -4850,15 +4864,31 @@ const firebaseConfig = {
 
     // Picking a gig brings its fee across, so the contract quotes the
     // number already agreed. Anything typed by hand is left alone.
-    let gigFee = ev && ev.fee != null ? String(ev.fee) : "";
+    // The last figure filled in automatically. A fee typed by hand
+    // never matches it, so it is never overwritten.
+    let autoFee = String(suggested);
+
+    function refreshFee() {
+      const next = autoFeeFor(form.eventId.value, form.invoiceId.value);
+      const current = form.fee.value.trim();
+      if (current === "" || current === autoFee || current === "0") form.fee.value = next;
+      autoFee = next;
+    }
+
     form.eventId.addEventListener("change", () => {
       const picked = form.eventId.value ? eventById(form.eventId.value) : null;
-      const nextFee = picked && picked.fee != null && picked.fee !== "" ? String(picked.fee) : "";
-      const current = form.fee.value.trim();
-      if (current === "" || current === gigFee) form.fee.value = nextFee;
-      gigFee = nextFee;
+      refreshFee();
       // The client follows the gig unless one is already chosen.
       if (picked && picked.clientId && !form.clientId.value) form.clientId.value = picked.clientId;
+    });
+    form.invoiceId.addEventListener("change", () => {
+      const inv2 = form.invoiceId.value ? invoiceById(form.invoiceId.value) : null;
+      refreshFee();
+      // An invoice brings its client and gig with it.
+      if (inv2) {
+        if (inv2.clientId) form.clientId.value = inv2.clientId;
+        if (inv2.eventId && !form.eventId.value) form.eventId.value = inv2.eventId;
+      }
     });
 
     $("#cancelContract").addEventListener("click", () => (ct ? openContractDetail(id) : closeModal()));

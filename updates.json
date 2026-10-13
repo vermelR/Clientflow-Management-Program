@@ -10,7 +10,9 @@
         "Gigs now take expenses: labour, the van, fuel, rentals, lodging, contractors. Add them on the gig and the form totals as you type, showing what's left of the fee.",
         "The gig then shows what it brings in, what it costs and what you keep, broken down by category, with the margin worked out. Once a gig is invoiced the invoice total is used instead of the booking fee.",
         "The dashboard gained a “Kept in” figure: what you collected this year less what the year's gigs cost you.",
-        "Fixed: for the first fraction of a second after any dialog opened, typing could land in the first field instead of the one you clicked."
+        "Fixed: for the first fraction of a second after any dialog opened, typing could land in the first field instead of the one you clicked.",
+        "Fixed: the save button crowded the COMP toggle on an invoice line, pushing the remove button onto a line of its own. Line items now lay out cleanly, and fold onto two rows on a phone instead of being squeezed.",
+        "A contract's fee now follows the money: pick a gig and it uses what that gig has been invoiced, pick an invoice and it uses that invoice's total. A fee you typed yourself is never overwritten."
       ]
     },
     {
