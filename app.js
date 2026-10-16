@@ -840,6 +840,18 @@
           <div class="field"><label>How they found you</label><input name="source" value="${escapeHtml(c?.source || "")}" placeholder="Referral, Instagram…"></div>
           <div class="field full"><label>Notes</label><textarea name="notes" placeholder="Preferences, music taste, do-not-play list…">${escapeHtml(c?.notes || "")}</textarea></div>
         </div>
+
+        <div class="section-label">Wedding planner / coordinator
+          <span class="section-hint">Copied on quotes and invoices so they can see the money. Never copied on the contract — that's between you and the client.</span>
+        </div>
+        <div class="form-grid">
+          <div class="field"><label>Planner's name</label>
+            <input name="plannerName" value="${escapeHtml(c?.plannerName || "")}" placeholder="e.g. Harper Events">
+          </div>
+          <div class="field"><label>Planner's email</label>
+            <input name="plannerEmail" type="email" value="${escapeHtml(c?.plannerEmail || "")}" placeholder="planner@email.com">
+          </div>
+        </div>
         <div class="modal-actions">
           ${c ? `<button type="button" class="btn btn-danger" id="deleteClient">Delete</button>` : ""}
           <button type="button" class="btn" id="cancelModal">Cancel</button>
@@ -884,6 +896,10 @@
         <div class="detail-item"><div class="lbl">Phone</div><div class="val">${escapeHtml(c.phone || "—")}</div></div>
         <div class="detail-item"><div class="lbl">Company</div><div class="val">${escapeHtml(c.company || "—")}</div></div>
         <div class="detail-item"><div class="lbl">Source</div><div class="val">${escapeHtml(c.source || "—")}</div></div>
+        ${plannerEmail(c) ? `<div class="detail-item"><div class="lbl">Planner</div>
+          <div class="val">${plannerName(c) ? escapeHtml(plannerName(c)) + "<br>" : ""}<a href="mailto:${escapeHtml(plannerEmail(c))}">${escapeHtml(plannerEmail(c))}</a>
+          <span class="sub">Copied on quotes &amp; invoices, not contracts</span></div>
+        </div>` : ""}
         <div class="detail-item"><div class="lbl">Lifetime paid</div><div class="val"><strong>${money(paid)}</strong></div></div>
         ${owed > 0 ? `<div class="detail-item"><div class="lbl">Still owed</div><div class="val"><strong style="color:var(--amber)">${money(owed)}</strong></div></div>` : ""}
       </div>
@@ -2102,6 +2118,8 @@
         <button class="btn" id="invShare">${shareActive(inv) ? "🔗 Live link" : "🔗 Share live link"}</button>
         <button class="btn" id="invEdit">Edit</button>
       </div>
+      ${c?.email && plannerEmail(c)
+        ? `<div class="gmail-hint">📋 ${escapeHtml(plannerLabel(c))} is copied on this.</div>` : ""}
       ${!c?.email
         ? `<div class="gmail-hint">${escapeHtml(c ? c.name : "This client")} has no email address saved, so there's nowhere to send this yet. Add one and the send buttons appear here.</div>`
         : !gmailOn ? `<div class="gmail-hint">Tip: connect Gmail in <a href="#" id="goSettings">Settings</a> to send invoices directly from here.</div>` : ""}`), true);
@@ -2216,6 +2234,37 @@
 
   /* ---------- Email: mailto fallback ---------- */
 
+  /* ---------- The planner on the other side ----------
+     A wedding is usually run by a planner who wants sight of the money
+     — quotes and invoices — but has no business being copied on the
+     agreement between the DJ and the couple. So this is used for the
+     first and deliberately never for the second. */
+
+  function plannerEmail(c) {
+    return ((c && c.plannerEmail) || "").trim();
+  }
+
+  function plannerName(c) {
+    return ((c && c.plannerName) || "").trim();
+  }
+
+  function plannerLabel(c) {
+    const email = plannerEmail(c);
+    if (!email) return "";
+    return plannerName(c) ? `${plannerName(c)} (${email})` : email;
+  }
+
+  // The Cc list for anything to do with money.
+  function moneyCc(c) {
+    const email = plannerEmail(c);
+    return email ? [email] : [];
+  }
+
+  function ccParam(c) {
+    const list = moneyCc(c);
+    return list.length ? `&cc=${encodeURIComponent(list.join(","))}` : "";
+  }
+
   function invoiceEmailSubject(inv) {
     const s = state.settings;
     if (isFullyPaid(inv) && invPaid(inv) > 0) return `Invoice ${inv.number} from ${s.businessName} — paid in full, thank you!`;
@@ -2268,7 +2317,7 @@
   function emailInvoice(inv) {
     const c = clientById(inv.clientId);
     if (!c?.email) { toast("This client has no email address on file"); return; }
-    const url = `mailto:${encodeURIComponent(c.email)}?subject=${encodeURIComponent(invoiceEmailSubject(inv))}&body=${encodeURIComponent(invoiceEmailText(inv))}`;
+    const url = `mailto:${encodeURIComponent(c.email)}?subject=${encodeURIComponent(invoiceEmailSubject(inv))}${ccParam(c)}&body=${encodeURIComponent(invoiceEmailText(inv))}`;
     window.location.href = url;
     if (inv.status === "draft") {
       inv.status = "sent";
@@ -2674,9 +2723,11 @@
     </body></html>`;
   }
 
-  async function gmailSend(to, subject, html, attachment = null) {
+  async function gmailSend(to, subject, html, attachment = null, cc = []) {
+    const copies = (Array.isArray(cc) ? cc : [cc]).map(x => String(x || "").trim()).filter(Boolean);
     const headers = [
       `To: ${to}`,
+      ...(copies.length ? [`Cc: ${copies.join(", ")}`] : []),
       `Subject: =?UTF-8?B?${b64utf8(subject)}?=`,
       "MIME-Version: 1.0",
     ];
@@ -2776,17 +2827,17 @@
       }
       toast(attachment ? "Sending with PDF…" : "Sending…");
       try {
-        await gmailSend(c.email, invoiceEmailSubject(inv), invoiceEmailHtml(inv), attachment);
+        await gmailSend(c.email, invoiceEmailSubject(inv), invoiceEmailHtml(inv), attachment, moneyCc(c));
       } catch (err) {
         // Tokens last an hour; renew and retry once so an expiry is
         // invisible rather than a failed send the user has to repeat.
         if (!err?.expired) throw err;
         await ensureGoogleScope(GMAIL_SCOPE);
-        await gmailSend(c.email, invoiceEmailSubject(inv), invoiceEmailHtml(inv), attachment);
+        await gmailSend(c.email, invoiceEmailSubject(inv), invoiceEmailHtml(inv), attachment, moneyCc(c));
       }
       if (inv.status !== "paid") inv.status = "sent";
       save(); render();
-      toast(`Invoice ${inv.number} emailed to ${c.email} 🎉`);
+      toast(`Invoice ${inv.number} emailed to ${c.email}${plannerEmail(c) ? `, copied to ${plannerEmail(c)}` : ""} 🎉`);
       openInvoiceDetail(id);
     } catch (err) {
       console.warn(err);
@@ -5181,6 +5232,8 @@ const firebaseConfig = {
         <button class="btn" id="ctPreviewLink">👁 See what they see</button>
       </div>
 
+      ${c && c.email && plannerEmail(c)
+        ? `<div class="gmail-hint">🔒 ${escapeHtml(plannerName(c) || "The planner")} is <strong>not</strong> copied — a contract goes to ${escapeHtml(c.name)} alone.</div>` : ""}
       ${!(c && c.email) ? `<div class="gmail-hint">This client has no email on file — copy the link and text it to them, or add an email address first.</div>` : ""}
 
       <div class="share-stop">
@@ -6027,6 +6080,9 @@ const firebaseConfig = {
 
       ${!(c && c.email) ? `<div class="gmail-hint">This client has no email on file — copy the link and text it to them, or add an email address first.</div>` : ""}
 
+      ${c && c.email && plannerEmail(c)
+        ? `<div class="gmail-hint">📋 ${escapeHtml(plannerLabel(c))} is copied when you send this.</div>` : ""}
+
       <div class="share-stop">
         <button class="btn btn-sm btn-danger" id="stopShareLink">Stop sharing</button>
         <span class="hint">Switches the link off. Anyone who still has it sees a short "no longer available" note.</span>
@@ -6053,7 +6109,7 @@ const firebaseConfig = {
     $("#previewShareLink").addEventListener("click", () => window.open(url, "_blank", "noopener"));
 
     $("#mailShareLink")?.addEventListener("click", () => {
-      window.location.href = `mailto:${encodeURIComponent(c.email)}?subject=${encodeURIComponent(shareEmailSubject(inv))}&body=${encodeURIComponent(shareEmailText(inv, url))}`;
+      window.location.href = `mailto:${encodeURIComponent(c.email)}?subject=${encodeURIComponent(shareEmailSubject(inv))}${ccParam(c)}&body=${encodeURIComponent(shareEmailText(inv, url))}`;
       toast("Opening your mail app…");
     });
 
@@ -6063,7 +6119,7 @@ const firebaseConfig = {
       try {
         if (!hasGoogleScope(GMAIL_SCOPE)) { toast("Connecting to Gmail…"); await ensureGoogleScope(GMAIL_SCOPE); }
         toast("Sending…");
-        const send = () => gmailSend(c.email, shareEmailSubject(inv), shareEmailHtml(inv, url));
+        const send = () => gmailSend(c.email, shareEmailSubject(inv), shareEmailHtml(inv, url), null, moneyCc(c));
         try {
           await send();
         } catch (err) {
@@ -6073,7 +6129,7 @@ const firebaseConfig = {
         }
         if (inv.status === "draft") { inv.status = "sent"; save(); render(); }
         closeModal();
-        toast(`Link sent to ${c.email} 🔗`);
+        toast(`Link sent to ${c.email}${plannerEmail(c) ? `, copied to ${plannerEmail(c)}` : ""} 🔗`);
       } catch (err) {
         console.warn(err);
         btn.disabled = false;

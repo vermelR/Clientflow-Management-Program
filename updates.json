@@ -1,6 +1,16 @@
 {
   "updates": [
     {
+      "title": "Copy the wedding planner on the money",
+      "date": "2026-10-16",
+      "notes": [
+        "A client can now carry their planner or coordinator's name and email, under the client's own details.",
+        "Quotes, live quote links and invoices are copied to them automatically — by Gmail or your mail app, whichever you send with.",
+        "Contracts are never copied to them. The agreement goes to your client alone, and the contract screen says so in as many words.",
+        "Each screen tells you who is on the email before you send it, so there are no surprises either way."
+      ]
+    },
+    {
       "title": "Fixed: a saved contract disappearing",
       "date": "2026-10-13",
       "notes": [
